@@ -1,0 +1,28 @@
+{"seq": 1, "stream": "stdout", "line": "------------------------------------------------------------------------------"}
+{"seq": 2, "stream": "stdout", "line": "Executing test probe_pass..."}
+{"seq": 3, "stream": "stdout", "line": "DEBUG (19:07): probe_pass ran"}
+{"seq": 4, "stream": "stdout", "line": "PASS"}
+{"seq": 5, "stream": "stdout", "line": "------------------------------------------------------------------------------"}
+{"seq": 6, "stream": "stdout", "line": "Executing test probe_fail..."}
+{"seq": 7, "stream": "stdout", "line": "DEBUG (19:07): probe_fail ran"}
+{"seq": 8, "stream": "stdout", "line": "FAIL"}
+{"seq": 9, "stream": "stdout", "line": "------------------------------------------------------------------------------"}
+{"seq": 10, "stream": "stdout", "line": "Executing test probe_error..."}
+{"seq": 11, "stream": "stdout", "line": ""}
+{"seq": 12, "stream": "stdout", "line": "Error: Array Out Of Bounds Error"}
+{"seq": 13, "stream": "stdout", "line": "Details: Failed invoking <symbol>"}
+{"seq": 14, "stream": "stdout", "line": "Stack: "}
+{"seq": 15, "stream": "stdout", "line": "  - probe_error() at /Users/dev/development/garmin/simulator-mcp/Tests/fixtures/transcriptprobe/source/TranscriptProbeTests.mc:26 0x1000005e "}
+{"seq": 16, "stream": "stdout", "line": "  - evaluate_test_entries_0_to_3() at /private/tmp/simulator-mcp-fixture/gen/006-B3291-00/source/UnitTests.mcgen:57 0x100002b7 "}
+{"seq": 17, "stream": "stdout", "line": "  - runTest() at /private/tmp/simulator-mcp-fixture/gen/006-B3291-00/source/UnitTests.mcgen:72 0x10000331 "}
+{"seq": 18, "stream": "stdout", "line": "ERROR"}
+{"seq": 19, "stream": "stdout", "line": ""}
+{"seq": 20, "stream": "stdout", "line": "=============================================================================="}
+{"seq": 21, "stream": "stdout", "line": "RESULTS"}
+{"seq": 22, "stream": "stdout", "line": "Test:                               Status:"}
+{"seq": 23, "stream": "stdout", "line": "probe_pass                          PASS"}
+{"seq": 24, "stream": "stdout", "line": "probe_fail                          FAIL"}
+{"seq": 25, "stream": "stdout", "line": "probe_error                         ERROR"}
+{"seq": 26, "stream": "stdout", "line": "Ran 3 tests"}
+{"seq": 27, "stream": "stdout", "line": ""}
+{"seq": 28, "stream": "stdout", "line": "FAILED (passed=1, failed=1, errors=1)"}

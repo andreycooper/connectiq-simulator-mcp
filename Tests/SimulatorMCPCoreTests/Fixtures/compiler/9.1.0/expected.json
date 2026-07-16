@@ -1,0 +1,30 @@
+{
+  "capturedOn": "2026-07-12",
+  "sdkDirectory": "connectiq-sdk-mac-9.1.0-2026-03-09-6a872a80b",
+  "invocation": "bin/monkeyc -f Tests/fixtures/compilerprobe/monkey.jungle -o <tmp>.prg -d fenix6xpro -y $SIM_DEVELOPER_KEY -w",
+  "exitCode": 100,
+  "stdoutBytes": 0,
+  "diagnostics": [
+    {
+      "file": null,
+      "line": null,
+      "column": null,
+      "severity": "warning",
+      "message": "The launcher icon (16x16) isn't compatible with the specified launcher icon size of the device 'fenix6xpro' (40x40). The image will be scaled to the target size."
+    },
+    {
+      "file": "/Users/dev/development/garmin/simulator-mcp/Tests/fixtures/compilerprobe/source/CompilerProbe.mc",
+      "line": 13,
+      "column": 8,
+      "severity": "warning",
+      "message": "Local variable 'unusedLocal' is not used."
+    },
+    {
+      "file": "/Users/dev/development/garmin/simulator-mcp/Tests/fixtures/compilerprobe/source/CompilerProbe.mc",
+      "line": 17,
+      "column": 8,
+      "severity": "error",
+      "message": "Undefined symbol ':thisSymbolDoesNotExist' detected."
+    }
+  ]
+}

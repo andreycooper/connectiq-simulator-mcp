@@ -1,0 +1,13 @@
+{
+  "label": "9.1.0-filtered",
+  "capturedOn": "2026-07-12T19:07:28.065308+02:00",
+  "invocation": [
+    "/Users/dev/Library/Application Support/Garmin/ConnectIQ/Sdks/connectiq-sdk-mac-9.1.0-2026-03-09-6a872a80b/bin/monkeydo",
+    "/private/tmp/simulator-mcp-fixture/transcriptprobe-9.1.0.prg",
+    "fenix6xpro",
+    "-t",
+    "probe_pass"
+  ],
+  "exitCode": 1,
+  "eventCount": 12
+}

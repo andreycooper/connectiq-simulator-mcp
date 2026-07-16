@@ -1,0 +1,21 @@
+{
+  "reviewedOn": "2026-07-12",
+  "mcpSdk": {
+    "version": "0.12.1",
+    "revision": "a0ae212ebf6eab5f754c3129608bc5557637e605"
+  },
+  "simulatorSdks": ["8.4.1", "9.1.0"],
+  "amendedOn": "2026-07-15",
+  "gpsMenuPath": ["Settings", "Set Position"],
+  "candidateInputProfiles": [{
+    "name": "fenix6xpro-five-button",
+    "deviceIds": ["fenix6xpro"],
+    "virtualKeyCodes": {
+      "up": 126,
+      "down": 125,
+      "select": 36,
+      "back": 53,
+      "light": 37
+    }
+  }]
+}

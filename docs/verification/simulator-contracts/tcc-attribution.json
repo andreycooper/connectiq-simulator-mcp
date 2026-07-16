@@ -1,0 +1,28 @@
+{
+  "deploymentMode": "stableBinary",
+  "executablePath": "/Users/dev/.simulator-mcp/bin/simulator-mcp",
+  "responsibleProcess": {
+    "name": "claude",
+    "pid": 13617
+  },
+  "signature": {
+    "identity": "simulator-mcp-local",
+    "signingIdentifier": "simulator-mcp"
+  },
+  "installedClientDoctor": {
+    "requestPermissions": false,
+    "executablePath": "/Users/dev/.simulator-mcp/bin/simulator-mcp",
+    "signatureKind": "stable",
+    "signingIdentifier": "simulator-mcp",
+    "screenRecordingGranted": true,
+    "accessibilityGranted": true
+  },
+  "actualMCPHostDoctor": {
+    "requestPermissions": false,
+    "executablePath": "/Users/dev/.simulator-mcp/bin/simulator-mcp",
+    "signatureKind": "stable",
+    "signingIdentifier": "simulator-mcp",
+    "screenRecordingGranted": true,
+    "accessibilityGranted": true
+  }
+}

@@ -1,0 +1,3 @@
+# Alternate jungle in a subdirectory: quoted manifest path, relative to
+# this jungle's own directory, escaping upward into meta/.
+project.manifest = "../meta/manifest.xml"

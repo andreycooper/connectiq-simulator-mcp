@@ -1,0 +1,59 @@
+{
+  "applicationWasActivated" : false,
+  "device" : "fenix6xpro",
+  "recordedOn" : "2026-07-15T12:45:45Z",
+  "schemaVersion" : 1,
+  "sdkPath" : "/Users/dev/Library/Application Support/Garmin/ConnectIQ/Sdks/connectiq-sdk-mac-9.1.0-2026-03-09-6a872a80b",
+  "sdkVersion" : "9.1.0",
+  "simulatorPid" : 57700,
+  "snapshot" : {
+    "actions" : [],
+    "children" : [
+      {
+        "actions" : [
+          "AXRaise"
+        ],
+        "children" : [
+          {
+            "actions" : [
+              "AXPress"
+            ],
+            "children" : [],
+            "role" : "AXButton"
+          },
+          {
+            "actions" : [
+              "AXPress",
+              "AXShowMenu",
+              "AXZoomWindow"
+            ],
+            "children" : [
+              {
+                "actions" : [],
+                "children" : [],
+                "role" : "AXGroup"
+              }
+            ],
+            "role" : "AXButton"
+          },
+          {
+            "actions" : [
+              "AXPress"
+            ],
+            "children" : [],
+            "role" : "AXButton"
+          },
+          {
+            "actions" : [],
+            "children" : [],
+            "role" : "AXStaticText"
+          }
+        ],
+        "role" : "AXWindow",
+        "title" : "CIQ Simulator - fēnix® 6X Pro / 6X Sapphire / 6X Pro Solar / tactix® Delta Sapphire / Delta Solar / Delta Solar - Ballistics Edition / quatix® 6X / 6X Solar / 6X Dual Power (3.4.5)"
+      }
+    ],
+    "role" : "AXApplication",
+    "title" : "Connect IQ Device Simulator"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "label": "9.1.0-truncated",
+  "capturedOn": "2026-07-12T19:07:25.631454+02:00",
+  "invocation": [
+    "/Users/dev/Library/Application Support/Garmin/ConnectIQ/Sdks/connectiq-sdk-mac-9.1.0-2026-03-09-6a872a80b/bin/monkeydo",
+    "/private/tmp/simulator-mcp-fixture/transcriptprobe-9.1.0.prg",
+    "fenix6xpro",
+    "-t"
+  ],
+  "exitCode": 1,
+  "eventCount": 26,
+  "derivedFrom": "full",
+  "derivation": "removed the trailing blank line and the final PASSED/FAILED summary line from a copy of full/events.jsonl; no content was synthesized"
+}

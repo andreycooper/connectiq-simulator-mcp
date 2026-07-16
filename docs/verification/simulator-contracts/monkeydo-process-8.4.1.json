@@ -1,0 +1,249 @@
+{
+  "ancestryVerified" : true,
+  "collectionCommands" : {
+    "connections" : "/usr/sbin/lsof -nP -a -p <pid> -iTCP -sTCP:ESTABLISHED -Fpn",
+    "executable" : "proc_pidpath",
+    "processList" : "proc_listpids(PROC_PPID_ONLY) recursive descendant walk",
+    "snapshot" : "proc_pidinfo(PROC_PIDTBSDINFO) + proc_pidpath + sysctl(KERN_PROCARGS2)"
+  },
+  "collectionSchemaVersion" : 1,
+  "connectionOwner" : {
+    "localEndpoint" : {
+      "address" : "127.0.0.1",
+      "family" : "ipv4",
+      "port" : 58044
+    },
+    "matchedSimulatorListener" : {
+      "address" : "*",
+      "family" : "ipv4",
+      "port" : 1234
+    },
+    "process" : {
+      "arguments" : [
+        "/Users/dev/Library/Application Support/Garmin/ConnectIQ/Sdks/connectiq-sdk-mac-8.4.1-2026-02-03-e9f77eeaa/bin/shell",
+        "--transport=tcp",
+        "--transport_args=127.0.0.1:1234"
+      ],
+      "displayCommand" : "\"/Users/dev/Library/Application Support/Garmin/ConnectIQ/Sdks/connectiq-sdk-mac-8.4.1-2026-02-03-e9f77eeaa/bin/shell\" --transport=tcp --transport_args=127.0.0.1:1234",
+      "executablePath" : "/Users/dev/Library/Application Support/Garmin/ConnectIQ/Sdks/connectiq-sdk-mac-8.4.1-2026-02-03-e9f77eeaa/bin/shell",
+      "parentPid" : 41130,
+      "pid" : 41134,
+      "processGroupId" : 41122,
+      "processStartIdentity" : "1784093032.527967"
+    },
+    "remoteEndpoint" : {
+      "address" : "127.0.0.1",
+      "family" : "ipv4",
+      "port" : 1234
+    }
+  },
+  "descendants" : [
+    {
+      "arguments" : [
+        "/usr/bin/java",
+        "-classpath",
+        "/Users/dev/Library/Application Support/Garmin/ConnectIQ/Sdks/connectiq-sdk-mac-8.4.1-2026-02-03-e9f77eeaa/bin/monkeybrains.jar",
+        "com.garmin.monkeybrains.monkeydodeux.MonkeyDoDeux",
+        "-f",
+        "/Users/dev/development/garmin/simulator-mcp/Tests/fixtures/testapp/bin/Simulator_MCP_Fixture-fenix6xpro.prg",
+        "-d",
+        "fenix6xpro",
+        "-s",
+        "/Users/dev/Library/Application Support/Garmin/ConnectIQ/Sdks/connectiq-sdk-mac-8.4.1-2026-02-03-e9f77eeaa/bin/shell"
+      ],
+      "displayCommand" : "/usr/bin/java -classpath \"/Users/dev/Library/Application Support/Garmin/ConnectIQ/Sdks/connectiq-sdk-mac-8.4.1-2026-02-03-e9f77eeaa/bin/monkeybrains.jar\" com.garmin.monkeybrains.monkeydodeux.MonkeyDoDeux -f /Users/dev/development/garmin/simulator-mcp/Tests/fixtures/testapp/bin/Simulator_MCP_Fixture-fenix6xpro.prg -d fenix6xpro -s \"/Users/dev/Library/Application Support/Garmin/ConnectIQ/Sdks/connectiq-sdk-mac-8.4.1-2026-02-03-e9f77eeaa/bin/shell\"",
+      "executablePath" : "/Library/Java/JavaVirtualMachines/zulu-17.jdk/Contents/Home/bin/java",
+      "parentPid" : 41122,
+      "pid" : 41130,
+      "processGroupId" : 41122,
+      "processStartIdentity" : "1784093031.391749"
+    },
+    {
+      "arguments" : [
+        "/Users/dev/Library/Application Support/Garmin/ConnectIQ/Sdks/connectiq-sdk-mac-8.4.1-2026-02-03-e9f77eeaa/bin/shell",
+        "--transport=tcp",
+        "--transport_args=127.0.0.1:1234",
+        "push",
+        "\"/Users/dev/development/garmin/simulator-mcp/Tests/fixtures/testapp/bin/Simulator_MCP_Fixture-fenix6xpro.prg\"",
+        "\"0:/GARMIN/APPS/Simulator_MCP_Fixture-fenix6xpro.prg\""
+      ],
+      "displayCommand" : "\"/Users/dev/Library/Application Support/Garmin/ConnectIQ/Sdks/connectiq-sdk-mac-8.4.1-2026-02-03-e9f77eeaa/bin/shell\" --transport=tcp --transport_args=127.0.0.1:1234 push \"/Users/dev/development/garmin/simulator-mcp/Tests/fixtures/testapp/bin/Simulator_MCP_Fixture-fenix6xpro.prg\" \"0:/GARMIN/APPS/Simulator_MCP_Fixture-fenix6xpro.prg\"",
+      "executablePath" : "/Users/dev/Library/Application Support/Garmin/ConnectIQ/Sdks/connectiq-sdk-mac-8.4.1-2026-02-03-e9f77eeaa/bin/shell",
+      "parentPid" : 41130,
+      "pid" : 41132,
+      "processGroupId" : 41122,
+      "processStartIdentity" : "1784093031.501250"
+    },
+    {
+      "arguments" : [
+        "/Users/dev/Library/Application Support/Garmin/ConnectIQ/Sdks/connectiq-sdk-mac-8.4.1-2026-02-03-e9f77eeaa/bin/shell",
+        "--transport=tcp",
+        "--transport_args=127.0.0.1:1234"
+      ],
+      "displayCommand" : "\"/Users/dev/Library/Application Support/Garmin/ConnectIQ/Sdks/connectiq-sdk-mac-8.4.1-2026-02-03-e9f77eeaa/bin/shell\" --transport=tcp --transport_args=127.0.0.1:1234",
+      "executablePath" : "/Users/dev/Library/Application Support/Garmin/ConnectIQ/Sdks/connectiq-sdk-mac-8.4.1-2026-02-03-e9f77eeaa/bin/shell",
+      "parentPid" : 41130,
+      "pid" : 41134,
+      "processGroupId" : 41122,
+      "processStartIdentity" : "1784093032.527967"
+    }
+  ],
+  "device" : "fenix6xpro",
+  "elapsedMonotonicMilliseconds" : 1215,
+  "endpointVerified" : true,
+  "fixtureMarkerObserved" : false,
+  "launcher" : {
+    "arguments" : [
+      "/bin/bash",
+      "/Users/dev/Library/Application Support/Garmin/ConnectIQ/Sdks/connectiq-sdk-mac-8.4.1-2026-02-03-e9f77eeaa/bin/monkeydo",
+      "/Users/dev/development/garmin/simulator-mcp/Tests/fixtures/testapp/bin/Simulator_MCP_Fixture-fenix6xpro.prg",
+      "fenix6xpro"
+    ],
+    "displayCommand" : "/bin/bash \"/Users/dev/Library/Application Support/Garmin/ConnectIQ/Sdks/connectiq-sdk-mac-8.4.1-2026-02-03-e9f77eeaa/bin/monkeydo\" /Users/dev/development/garmin/simulator-mcp/Tests/fixtures/testapp/bin/Simulator_MCP_Fixture-fenix6xpro.prg fenix6xpro",
+    "executablePath" : "/bin/bash",
+    "parentPid" : 41038,
+    "pid" : 41122,
+    "processGroupId" : 41122,
+    "processStartIdentity" : "1784093031.377649"
+  },
+  "launcherGroupDedicated" : true,
+  "launcherGroupFullyAnchored" : true,
+  "launcherGroupInherited" : false,
+  "launcherProcessGroupMembers" : [
+    {
+      "arguments" : [
+        "/bin/bash",
+        "/Users/dev/Library/Application Support/Garmin/ConnectIQ/Sdks/connectiq-sdk-mac-8.4.1-2026-02-03-e9f77eeaa/bin/monkeydo",
+        "/Users/dev/development/garmin/simulator-mcp/Tests/fixtures/testapp/bin/Simulator_MCP_Fixture-fenix6xpro.prg",
+        "fenix6xpro"
+      ],
+      "displayCommand" : "/bin/bash \"/Users/dev/Library/Application Support/Garmin/ConnectIQ/Sdks/connectiq-sdk-mac-8.4.1-2026-02-03-e9f77eeaa/bin/monkeydo\" /Users/dev/development/garmin/simulator-mcp/Tests/fixtures/testapp/bin/Simulator_MCP_Fixture-fenix6xpro.prg fenix6xpro",
+      "executablePath" : "/bin/bash",
+      "parentPid" : 41038,
+      "pid" : 41122,
+      "processGroupId" : 41122,
+      "processStartIdentity" : "1784093031.377649"
+    },
+    {
+      "arguments" : [
+        "/usr/bin/java",
+        "-classpath",
+        "/Users/dev/Library/Application Support/Garmin/ConnectIQ/Sdks/connectiq-sdk-mac-8.4.1-2026-02-03-e9f77eeaa/bin/monkeybrains.jar",
+        "com.garmin.monkeybrains.monkeydodeux.MonkeyDoDeux",
+        "-f",
+        "/Users/dev/development/garmin/simulator-mcp/Tests/fixtures/testapp/bin/Simulator_MCP_Fixture-fenix6xpro.prg",
+        "-d",
+        "fenix6xpro",
+        "-s",
+        "/Users/dev/Library/Application Support/Garmin/ConnectIQ/Sdks/connectiq-sdk-mac-8.4.1-2026-02-03-e9f77eeaa/bin/shell"
+      ],
+      "displayCommand" : "/usr/bin/java -classpath \"/Users/dev/Library/Application Support/Garmin/ConnectIQ/Sdks/connectiq-sdk-mac-8.4.1-2026-02-03-e9f77eeaa/bin/monkeybrains.jar\" com.garmin.monkeybrains.monkeydodeux.MonkeyDoDeux -f /Users/dev/development/garmin/simulator-mcp/Tests/fixtures/testapp/bin/Simulator_MCP_Fixture-fenix6xpro.prg -d fenix6xpro -s \"/Users/dev/Library/Application Support/Garmin/ConnectIQ/Sdks/connectiq-sdk-mac-8.4.1-2026-02-03-e9f77eeaa/bin/shell\"",
+      "executablePath" : "/Library/Java/JavaVirtualMachines/zulu-17.jdk/Contents/Home/bin/java",
+      "parentPid" : 41122,
+      "pid" : 41130,
+      "processGroupId" : 41122,
+      "processStartIdentity" : "1784093031.391749"
+    },
+    {
+      "arguments" : [
+        "/Users/dev/Library/Application Support/Garmin/ConnectIQ/Sdks/connectiq-sdk-mac-8.4.1-2026-02-03-e9f77eeaa/bin/shell",
+        "--transport=tcp",
+        "--transport_args=127.0.0.1:1234"
+      ],
+      "displayCommand" : "\"/Users/dev/Library/Application Support/Garmin/ConnectIQ/Sdks/connectiq-sdk-mac-8.4.1-2026-02-03-e9f77eeaa/bin/shell\" --transport=tcp --transport_args=127.0.0.1:1234",
+      "executablePath" : "/Users/dev/Library/Application Support/Garmin/ConnectIQ/Sdks/connectiq-sdk-mac-8.4.1-2026-02-03-e9f77eeaa/bin/shell",
+      "parentPid" : 41130,
+      "pid" : 41134,
+      "processGroupId" : 41122,
+      "processStartIdentity" : "1784093032.527967"
+    }
+  ],
+  "parentChain" : [
+    {
+      "arguments" : [
+        "/Users/dev/Library/Application Support/Garmin/ConnectIQ/Sdks/connectiq-sdk-mac-8.4.1-2026-02-03-e9f77eeaa/bin/shell",
+        "--transport=tcp",
+        "--transport_args=127.0.0.1:1234"
+      ],
+      "displayCommand" : "\"/Users/dev/Library/Application Support/Garmin/ConnectIQ/Sdks/connectiq-sdk-mac-8.4.1-2026-02-03-e9f77eeaa/bin/shell\" --transport=tcp --transport_args=127.0.0.1:1234",
+      "executablePath" : "/Users/dev/Library/Application Support/Garmin/ConnectIQ/Sdks/connectiq-sdk-mac-8.4.1-2026-02-03-e9f77eeaa/bin/shell",
+      "parentPid" : 41130,
+      "pid" : 41134,
+      "processGroupId" : 41122,
+      "processStartIdentity" : "1784093032.527967"
+    },
+    {
+      "arguments" : [
+        "/usr/bin/java",
+        "-classpath",
+        "/Users/dev/Library/Application Support/Garmin/ConnectIQ/Sdks/connectiq-sdk-mac-8.4.1-2026-02-03-e9f77eeaa/bin/monkeybrains.jar",
+        "com.garmin.monkeybrains.monkeydodeux.MonkeyDoDeux",
+        "-f",
+        "/Users/dev/development/garmin/simulator-mcp/Tests/fixtures/testapp/bin/Simulator_MCP_Fixture-fenix6xpro.prg",
+        "-d",
+        "fenix6xpro",
+        "-s",
+        "/Users/dev/Library/Application Support/Garmin/ConnectIQ/Sdks/connectiq-sdk-mac-8.4.1-2026-02-03-e9f77eeaa/bin/shell"
+      ],
+      "displayCommand" : "/usr/bin/java -classpath \"/Users/dev/Library/Application Support/Garmin/ConnectIQ/Sdks/connectiq-sdk-mac-8.4.1-2026-02-03-e9f77eeaa/bin/monkeybrains.jar\" com.garmin.monkeybrains.monkeydodeux.MonkeyDoDeux -f /Users/dev/development/garmin/simulator-mcp/Tests/fixtures/testapp/bin/Simulator_MCP_Fixture-fenix6xpro.prg -d fenix6xpro -s \"/Users/dev/Library/Application Support/Garmin/ConnectIQ/Sdks/connectiq-sdk-mac-8.4.1-2026-02-03-e9f77eeaa/bin/shell\"",
+      "executablePath" : "/Library/Java/JavaVirtualMachines/zulu-17.jdk/Contents/Home/bin/java",
+      "parentPid" : 41122,
+      "pid" : 41130,
+      "processGroupId" : 41122,
+      "processStartIdentity" : "1784093031.391749"
+    },
+    {
+      "arguments" : [
+        "/bin/bash",
+        "/Users/dev/Library/Application Support/Garmin/ConnectIQ/Sdks/connectiq-sdk-mac-8.4.1-2026-02-03-e9f77eeaa/bin/monkeydo",
+        "/Users/dev/development/garmin/simulator-mcp/Tests/fixtures/testapp/bin/Simulator_MCP_Fixture-fenix6xpro.prg",
+        "fenix6xpro"
+      ],
+      "displayCommand" : "/bin/bash \"/Users/dev/Library/Application Support/Garmin/ConnectIQ/Sdks/connectiq-sdk-mac-8.4.1-2026-02-03-e9f77eeaa/bin/monkeydo\" /Users/dev/development/garmin/simulator-mcp/Tests/fixtures/testapp/bin/Simulator_MCP_Fixture-fenix6xpro.prg fenix6xpro",
+      "executablePath" : "/bin/bash",
+      "parentPid" : 41038,
+      "pid" : 41122,
+      "processGroupId" : 41122,
+      "processStartIdentity" : "1784093031.377649"
+    }
+  ],
+  "postSocketRevalidationVerified" : true,
+  "recordedOn" : "2026-07-15T05:23:52Z",
+  "sdkPath" : "/Users/dev/Library/Application Support/Garmin/ConnectIQ/Sdks/connectiq-sdk-mac-8.4.1-2026-02-03-e9f77eeaa",
+  "sdkVersion" : "8.4.1",
+  "simulator" : {
+    "executablePath" : "/Users/dev/Library/Application Support/Garmin/ConnectIQ/Sdks/connectiq-sdk-mac-8.4.1-2026-02-03-e9f77eeaa/bin/ConnectIQ.app/Contents/MacOS/simulator",
+    "listeningEndpoints" : [
+      {
+        "address" : "*",
+        "family" : "ipv4",
+        "port" : 1234
+      },
+      {
+        "address" : "127.0.0.1",
+        "family" : "ipv4",
+        "port" : 42877
+      }
+    ],
+    "pid" : 41041
+  },
+  "testProcess" : {
+    "arguments" : [
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/libexec/swift/pm/swiftpm-testing-helper",
+      "--test-bundle-path",
+      "/Users/dev/development/garmin/simulator-mcp/.build/arm64-apple-macosx/debug/simulator-mcpPackageTests.xctest/Contents/MacOS/simulator-mcpPackageTests",
+      "--disable-sandbox",
+      "--filter",
+      "FixtureLaunchEvidenceTests.liveProcessEvidenceHarness",
+      "/Users/dev/development/garmin/simulator-mcp/.build/arm64-apple-macosx/debug/simulator-mcpPackageTests.xctest/Contents/MacOS/simulator-mcpPackageTests",
+      "--testing-library",
+      "swift-testing"
+    ],
+    "displayCommand" : "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/libexec/swift/pm/swiftpm-testing-helper --test-bundle-path /Users/dev/development/garmin/simulator-mcp/.build/arm64-apple-macosx/debug/simulator-mcpPackageTests.xctest/Contents/MacOS/simulator-mcpPackageTests --disable-sandbox --filter FixtureLaunchEvidenceTests.liveProcessEvidenceHarness /Users/dev/development/garmin/simulator-mcp/.build/arm64-apple-macosx/debug/simulator-mcpPackageTests.xctest/Contents/MacOS/simulator-mcpPackageTests --testing-library swift-testing",
+    "executablePath" : "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/libexec/swift/pm/swiftpm-testing-helper",
+    "parentPid" : 40848,
+    "pid" : 41038,
+    "processGroupId" : 41038,
+    "processStartIdentity" : "1784093025.173904"
+  }
+}

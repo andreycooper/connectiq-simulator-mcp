@@ -1,0 +1,249 @@
+{
+  "schemaVersion": 2,
+  "capturedOn": "2026-07-15",
+  "sdkVersion": "8.4.1",
+  "device": "fenix6xpro",
+  "sourceCaptureSha256": "ca5c84d29e8bdae716f56e9ad86d52aa3f42d2731453fdc15b9946e593b80e4c",
+  "publicFixtureGate": {
+    "simStopBefore": true,
+    "simStartExactSdk": true,
+    "runApp": true,
+    "fixtureStartedExact": true,
+    "simStopCleanup": true
+  },
+  "captureLimits": {
+    "axMessagingTimeoutSeconds": 1,
+    "maximumDepth": 16,
+    "maximumNodes": 512,
+    "newWindowTimeoutSeconds": 10,
+    "pollIntervalMilliseconds": 25
+  },
+  "captureCompleteness": {
+    "boundedTraversalReturnedWithoutError": true,
+    "depthLimitReached": false,
+    "nodeLimitReached": false,
+    "sourceDialogNodeCount": 10,
+    "sanitizedDialogNodeCount": 10,
+    "completeSanitizedDialogSubtreeRecorded": true
+  },
+  "accessibilityProbe": {
+    "applicationWasActivated": false,
+    "pointerWasMoved": false,
+    "coordinateClickUsed": false,
+    "appleScriptOrSystemEventsUsed": false,
+    "menuPath": [
+      "Settings",
+      "Set Position"
+    ],
+    "menuPathMatchedExactly": true,
+    "newWindowCount": 1,
+    "dialogTitleUsedAsSelector": false,
+    "expectedExactLabels": [
+      "Latitude",
+      "Longitude"
+    ],
+    "exactLatitudeStaticTextCount": 0,
+    "exactLongitudeStaticTextCount": 0,
+    "textFieldCount": 1,
+    "valueWasSet": false,
+    "defaultButtonWasPressed": false,
+    "dialogCloseWasTested": false
+  },
+  "dialog": {
+    "role": "AXWindow",
+    "title": "Set current position",
+    "identifier": null,
+    "value": null,
+    "frame": {
+      "x": 760,
+      "y": 284,
+      "width": 416,
+      "height": 147
+    },
+    "actions": [
+      "AXRaise"
+    ],
+    "children": [
+      {
+        "role": "AXStaticText",
+        "title": null,
+        "identifier": null,
+        "value": "Enter the current position in decimal degrees (latitude, longitude)",
+        "frame": {
+          "x": 769,
+          "y": 321,
+          "width": 398,
+          "height": 18
+        },
+        "actions": [],
+        "children": []
+      },
+      {
+        "role": "AXTextField",
+        "title": null,
+        "identifier": null,
+        "value": "0.000000, 0.000000",
+        "frame": {
+          "x": 774,
+          "y": 347,
+          "width": 388,
+          "height": 25
+        },
+        "actions": [
+          "AXConfirm",
+          "AXShowMenu"
+        ],
+        "children": []
+      },
+      {
+        "role": "AXButton",
+        "title": "OK",
+        "identifier": null,
+        "value": null,
+        "frame": {
+          "x": 1069,
+          "y": 392,
+          "width": 86,
+          "height": 22
+        },
+        "actions": [
+          "AXPress"
+        ],
+        "children": []
+      },
+      {
+        "role": "AXButton",
+        "title": "Cancel",
+        "identifier": null,
+        "value": null,
+        "frame": {
+          "x": 973,
+          "y": 392,
+          "width": 86,
+          "height": 22
+        },
+        "actions": [
+          "AXPress"
+        ],
+        "children": []
+      },
+      {
+        "role": "AXButton",
+        "title": null,
+        "identifier": null,
+        "value": null,
+        "frame": {
+          "x": 768,
+          "y": 291,
+          "width": 12,
+          "height": 14
+        },
+        "actions": [
+          "AXPress"
+        ],
+        "children": []
+      },
+      {
+        "role": "AXButton",
+        "title": null,
+        "identifier": null,
+        "value": null,
+        "frame": {
+          "x": 808,
+          "y": 291,
+          "width": 12,
+          "height": 14
+        },
+        "actions": [
+          "AXPress",
+          "AXShowMenu"
+        ],
+        "children": [
+          {
+            "role": "AXGroup",
+            "title": null,
+            "identifier": null,
+            "value": null,
+            "frame": {
+              "x": 807,
+              "y": 290,
+              "width": 14,
+              "height": 16
+            },
+            "actions": [],
+            "children": []
+          }
+        ]
+      },
+      {
+        "role": "AXButton",
+        "title": null,
+        "identifier": null,
+        "value": null,
+        "frame": {
+          "x": 788,
+          "y": 291,
+          "width": 12,
+          "height": 14
+        },
+        "actions": [
+          "AXPress"
+        ],
+        "children": []
+      },
+      {
+        "role": "AXStaticText",
+        "title": null,
+        "identifier": null,
+        "value": "Set current position",
+        "frame": {
+          "x": 901,
+          "y": 289,
+          "width": 133,
+          "height": 16
+        },
+        "actions": [],
+        "children": []
+      }
+    ]
+  },
+  "defaultButtonRelationship": {
+    "attribute": "AXDefaultButton",
+    "attributeWasPresent": true,
+    "dialogPath": "dialog/children[2]",
+    "relationship": "direct child of the new dialog window",
+    "role": "AXButton",
+    "title": "OK",
+    "identifier": null,
+    "frame": {
+      "x": 1069,
+      "y": 392,
+      "width": 86,
+      "height": 22
+    },
+    "actions": [
+      "AXPress"
+    ],
+    "usedAsTitleSelector": false
+  },
+  "geometryContract": {
+    "selectedLatitudeGap": null,
+    "selectedLongitudeGap": null,
+    "productionMaximumGap": null,
+    "status": "not_derivable_from_locked_label_field_contract"
+  },
+  "hostProcessAudit": {
+    "performedAfterPublicCleanup": true,
+    "pattern": "ConnectIQ.app/Contents/MacOS/simulator|monkeydo|MonkeyDoDeux",
+    "exitStatus": 1,
+    "output": "",
+    "matchingProcessCount": 0
+  },
+  "gateResult": {
+    "passed": false,
+    "code": "gps_dialog_contract_mismatch",
+    "reason": "SDK 8.4.1 exposes one combined coordinate AXTextField and no exact Latitude or Longitude AXStaticText labels.",
+    "sdk9_1_0Attempted": false,
+    "stopRuleApplied": true
+  }
+}

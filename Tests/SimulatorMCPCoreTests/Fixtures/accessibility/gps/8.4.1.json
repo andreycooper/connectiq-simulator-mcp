@@ -1,0 +1,69 @@
+{
+  "sdkVersion": "8.4.1",
+  "sourceCaptureSha256": "ca5c84d29e8bdae716f56e9ad86d52aa3f42d2731453fdc15b9946e593b80e4c",
+  "menuPath": ["Settings", "Set Position"],
+  "dialog": {
+    "role": "AXWindow",
+    "title": "Set current position",
+    "identifier": null,
+    "value": null,
+    "frame": {"x": 760, "y": 284, "width": 416, "height": 147},
+    "actions": ["AXRaise"],
+    "children": [
+      {
+        "role": "AXStaticText", "title": null, "identifier": null,
+        "value": "Enter the current position in decimal degrees (latitude, longitude)",
+        "frame": {"x": 769, "y": 321, "width": 398, "height": 18},
+        "actions": [], "children": []
+      },
+      {
+        "role": "AXTextField", "title": null, "identifier": null,
+        "value": "0.000000, 0.000000",
+        "frame": {"x": 774, "y": 347, "width": 388, "height": 25},
+        "actions": ["AXConfirm", "AXShowMenu"], "children": []
+      },
+      {
+        "role": "AXButton", "title": "OK", "identifier": null, "value": null,
+        "frame": {"x": 1069, "y": 392, "width": 86, "height": 22},
+        "actions": ["AXPress"], "children": []
+      },
+      {
+        "role": "AXButton", "title": "Cancel", "identifier": null, "value": null,
+        "frame": {"x": 973, "y": 392, "width": 86, "height": 22},
+        "actions": ["AXPress"], "children": []
+      },
+      {
+        "role": "AXButton", "title": null, "identifier": null, "value": null,
+        "frame": {"x": 768, "y": 291, "width": 12, "height": 14},
+        "actions": ["AXPress"], "children": []
+      },
+      {
+        "role": "AXButton", "title": null, "identifier": null, "value": null,
+        "frame": {"x": 808, "y": 291, "width": 12, "height": 14},
+        "actions": ["AXPress", "AXShowMenu"],
+        "children": [{
+          "role": "AXGroup", "title": null, "identifier": null, "value": null,
+          "frame": {"x": 807, "y": 290, "width": 14, "height": 16},
+          "actions": [], "children": []
+        }]
+      },
+      {
+        "role": "AXButton", "title": null, "identifier": null, "value": null,
+        "frame": {"x": 788, "y": 291, "width": 12, "height": 14},
+        "actions": ["AXPress"], "children": []
+      },
+      {
+        "role": "AXStaticText", "title": null, "identifier": null,
+        "value": "Set current position",
+        "frame": {"x": 901, "y": 289, "width": 133, "height": 16},
+        "actions": [], "children": []
+      }
+    ]
+  },
+  "defaultButton": {
+    "attribute": "AXDefaultButton",
+    "relationship": "direct child",
+    "role": "AXButton",
+    "actions": ["AXPress"]
+  }
+}

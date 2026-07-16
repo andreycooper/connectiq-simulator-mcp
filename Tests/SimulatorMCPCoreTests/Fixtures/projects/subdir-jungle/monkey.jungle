@@ -1,0 +1,4 @@
+# Root jungle deliberately points at a manifest that does not exist; the
+# tests prove a jungle override actually selects config/alt.jungle instead
+# of this file, and that resolving *this* jungle names it in the error.
+project.manifest = missing-manifest.xml

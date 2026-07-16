@@ -1,0 +1,19 @@
+{
+  "display": {
+    "isTouch": false,
+    "location": {
+      "height": 280,
+      "width": 280,
+      "x": 76,
+      "y": 141
+    }
+  },
+  "keys": [
+    { "behavior": "onSelect", "id": "enter", "location": { "height": 50, "width": 40, "x": 373, "y": 166 } },
+    { "behavior": "onNextPage", "id": "up" },
+    { "behavior": "onMenu", "id": "menu" },
+    { "behavior": "onPreviousPage", "id": "down" },
+    { "behavior": "onBack", "id": "esc" }
+  ],
+  "watchdogCount": 120000
+}

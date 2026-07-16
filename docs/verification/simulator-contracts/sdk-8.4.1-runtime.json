@@ -1,0 +1,13 @@
+{
+  "executablePath" : "/Users/dev/Library/Application Support/Garmin/ConnectIQ/Sdks/connectiq-sdk-mac-8.4.1-2026-02-03-e9f77eeaa/bin/ConnectIQ.app/Contents/MacOS/simulator",
+  "listeningEndpoints" : [
+    {
+      "address" : "127.0.0.1",
+      "family" : "ipv4",
+      "port" : 42877
+    }
+  ],
+  "sdkPath" : "/Users/dev/Library/Application Support/Garmin/ConnectIQ/Sdks/connectiq-sdk-mac-8.4.1-2026-02-03-e9f77eeaa",
+  "sdkVersion" : "8.4.1",
+  "simulatorPid" : 56867
+}

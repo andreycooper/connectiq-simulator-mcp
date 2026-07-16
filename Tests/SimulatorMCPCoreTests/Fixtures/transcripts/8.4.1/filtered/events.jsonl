@@ -1,0 +1,12 @@
+{"seq": 1, "stream": "stdout", "line": "------------------------------------------------------------------------------"}
+{"seq": 2, "stream": "stdout", "line": "Executing test probe_pass..."}
+{"seq": 3, "stream": "stdout", "line": "DEBUG (19:06): probe_pass ran"}
+{"seq": 4, "stream": "stdout", "line": "PASS"}
+{"seq": 5, "stream": "stdout", "line": ""}
+{"seq": 6, "stream": "stdout", "line": "=============================================================================="}
+{"seq": 7, "stream": "stdout", "line": "RESULTS"}
+{"seq": 8, "stream": "stdout", "line": "Test:                               Status:"}
+{"seq": 9, "stream": "stdout", "line": "probe_pass                          PASS"}
+{"seq": 10, "stream": "stdout", "line": "Ran 1 test"}
+{"seq": 11, "stream": "stdout", "line": ""}
+{"seq": 12, "stream": "stdout", "line": "PASSED (passed=1, failed=0, errors=0)"}

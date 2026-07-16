@@ -1,0 +1,6 @@
+# Transcript probe fixture: a valid watch app whose (:test) functions
+# produce one deterministic PASS (probe_pass), one assertion FAIL
+# (probe_fail), and one runtime ERROR (probe_error). Captured monkeydo
+# transcripts for each supported SDK live in
+# Tests/SimulatorMCPCoreTests/Fixtures/transcripts/.
+project.manifest = manifest.xml

@@ -1,0 +1,17 @@
+# Swift Package Manager
+.build/
+.swiftpm/
+*.prg
+
+# macOS
+.DS_Store
+
+# Local agent tooling
+.claude/
+.agents/
+.vscode/
+skills-lock.json
+
+Tests/fixtures/*/bin/
+Tests/fixtures/**/developer_key
+Tests/fixtures/**/developer_key.der

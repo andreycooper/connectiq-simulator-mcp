@@ -1,0 +1,63 @@
+{
+  "activationUsed": false,
+  "cleanup": {
+    "publicSimStop": true
+  },
+  "device": "fenix6xpro",
+  "dialogOpened": false,
+  "lockedPath": {
+    "menuItemTitle": "Set Position",
+    "menuTitle": "Simulation",
+    "matches": 0,
+    "observedMenuItems": [
+      "Activity Audio Prompts",
+      "Activity Data",
+      "Activity Monitoring",
+      "Activity Select",
+      "Set Navigation Data",
+      "Background Events",
+      "Complications",
+      "Time Simulation",
+      "Push Notification",
+      "Phone App Message",
+      "App Lock Enabled"
+    ]
+  },
+  "observedExactPath": {
+    "actions": [
+      "AXCancel",
+      "AXPick",
+      "AXPress"
+    ],
+    "identifier": "clickedAction:",
+    "menuItemRole": "AXMenuItem",
+    "menuItemTitle": "Set Position",
+    "menuRole": "AXMenuBarItem",
+    "menuTitle": "Settings",
+    "matches": 1
+  },
+  "publicFixtureGate": {
+    "fixtureStarted": true,
+    "getLogs": true,
+    "runApp": true,
+    "simStart": true,
+    "simStop": true
+  },
+  "recordedOn": "2026-07-15",
+  "schemaVersion": 1,
+  "sdkPath": "/Users/dev/Library/Application Support/Garmin/ConnectIQ/Sdks/connectiq-sdk-mac-9.1.0-2026-03-09-6a872a80b",
+  "sdkVersion": "9.1.0",
+  "selectorMode": "exact-role-and-title",
+  "stopReason": "locked_menu_path_mismatch",
+  "topLevelMenuTitles": [
+    "Apple",
+    "Connect IQ Device Simulator",
+    "File",
+    "Settings",
+    "Simulation",
+    "Data Fields",
+    "adb Connection",
+    "Window",
+    "Help"
+  ]
+}

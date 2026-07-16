@@ -1,0 +1,26 @@
+{
+  "passed": 1,
+  "failed": 1,
+  "errors": 1,
+  "overallPassed": false,
+  "perTest": [
+    {
+      "name": "probe_pass",
+      "status": "passed",
+      "durationSeconds": null,
+      "message": null
+    },
+    {
+      "name": "probe_fail",
+      "status": "failed",
+      "durationSeconds": null,
+      "message": null
+    },
+    {
+      "name": "probe_error",
+      "status": "error",
+      "durationSeconds": null,
+      "message": "Error: Array Out Of Bounds Error\nDetails: Failed invoking <symbol>\nStack: \n  - probe_error() at /Users/dev/development/garmin/simulator-mcp/Tests/fixtures/transcriptprobe/source/TranscriptProbeTests.mc:26 0x1000005e \n  - evaluate_test_entries_0_to_3() at /private/tmp/simulator-mcp-fixture/gen/006-B3291-00/source/UnitTests.mcgen:57 0x100002b7 \n  - runTest() at /private/tmp/simulator-mcp-fixture/gen/006-B3291-00/source/UnitTests.mcgen:72 0x10000331 "
+    }
+  ]
+}

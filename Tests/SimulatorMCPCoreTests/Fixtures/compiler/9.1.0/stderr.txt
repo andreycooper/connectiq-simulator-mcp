@@ -1,0 +1,3 @@
+WARNING: fenix6xpro: The launcher icon (16x16) isn't compatible with the specified launcher icon size of the device 'fenix6xpro' (40x40). The image will be scaled to the target size.
+WARNING: fenix6xpro: /Users/dev/development/garmin/simulator-mcp/Tests/fixtures/compilerprobe/source/CompilerProbe.mc:13,8: Local variable 'unusedLocal' is not used.
+ERROR: fenix6xpro: /Users/dev/development/garmin/simulator-mcp/Tests/fixtures/compilerprobe/source/CompilerProbe.mc:17,8: Undefined symbol ':thisSymbolDoesNotExist' detected.

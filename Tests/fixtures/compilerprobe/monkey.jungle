@@ -1,0 +1,5 @@
+# Compiler probe fixture: compiles far enough to emit one unused-local
+# warning and one unknown-symbol error at fixed line numbers (see
+# source/CompilerProbe.mc). Captured transcripts for each supported SDK
+# live in Tests/SimulatorMCPCoreTests/Fixtures/compiler/.
+project.manifest = manifest.xml

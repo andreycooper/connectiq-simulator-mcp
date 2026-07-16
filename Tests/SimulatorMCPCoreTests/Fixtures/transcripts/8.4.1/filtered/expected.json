@@ -1,0 +1,14 @@
+{
+  "passed": 1,
+  "failed": 0,
+  "errors": 0,
+  "overallPassed": true,
+  "perTest": [
+    {
+      "name": "probe_pass",
+      "status": "passed",
+      "durationSeconds": null,
+      "message": null
+    }
+  ]
+}

@@ -1,0 +1,230 @@
+# simulator-mcp
+
+[![Swift 6](https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white)](https://www.swift.org/)
+[![macOS 14+](https://img.shields.io/badge/macOS-14%2B-000000?logo=apple&logoColor=white)](https://www.apple.com/macos/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
+`simulator-mcp` is a macOS stdio MCP server for building, running, testing,
+observing, and setting the static GPS position of Garmin Connect IQ apps in the
+simulator. MCP JSON-RPC owns stdout; operational diagnostics use stderr.
+
+## Prerequisites
+
+- macOS 14+.
+- Swift 6 and Xcode command-line tools.
+- Garmin Connect IQ SDK/Device Manager with a device profile installed.
+- Java 17+.
+- A Connect IQ developer key outside this repository. Set
+  `SIM_DEVELOPER_KEY` to its absolute path for integration tests.
+
+## Stable signing and installation
+
+A Developer ID Application identity is preferred when one is available:
+
+```sh
+make install SIGNING_IDENTITY="Developer ID Application: Your Name (TEAMID)"
+```
+
+For local development, create the persistent self-signed identity once and
+install the stable binary:
+
+```sh
+./scripts/create-signing-identity.sh
+make install SIGNING_IDENTITY="simulator-mcp-local"
+```
+
+The supported stable binary path is
+`~/.simulator-mcp/bin/simulator-mcp`. `make sign` rejects an empty identity and
+ad-hoc signing (`-`), verifies the signature, and uses the production
+`SignatureInspector` to require a stable designated identity. `make install`
+publishes through a temporary file in the destination directory and verifies
+the installed copy.
+
+## TCC onboarding
+
+Start with the stable binary. The onboarding test launches that exact
+executable, calls `doctor` with `requestPermissions=true`, prints the structured
+report, and invokes no simulator operation:
+
+```sh
+SIM_TCC_ONBOARD=1 swift test --filter InstalledServerPermissionOnboardingTests
+```
+
+In System Settings, enable the exact executable reported by `doctor` under:
+
+- Privacy & Security > Screen & System Audio Recording
+- Privacy & Security > Accessibility
+
+After either grant changes, fully restart the test process and every MCP host;
+an already-running responsible process does not acquire the new grant.
+
+After the restart, verify the same installed executable without requesting
+another prompt. This pre-attribution check does not read
+`tcc-attribution.json`:
+
+```sh
+SIM_TCC_PREFLIGHT=1 swift test --filter InstalledServerPermissionPreflightTests
+```
+
+If both preflights attach to the stable binary, use deployment mode
+`stableBinary`. If macOS attributes them to an application identity, install
+the signed host and repeat onboarding against its executable:
+
+```sh
+make install-host SIGNING_IDENTITY="simulator-mcp-local"
+SIM_TCC_EXECUTABLE="$HOME/.simulator-mcp/SimulatorMCPHost.app/Contents/MacOS/simulator-mcp-host" \
+  SIM_TCC_ONBOARD=1 swift test --filter InstalledServerPermissionOnboardingTests
+```
+
+After granting and restarting, verify that host executable explicitly:
+
+```sh
+SIM_TCC_EXECUTABLE="$HOME/.simulator-mcp/SimulatorMCPHost.app/Contents/MacOS/simulator-mcp-host" \
+  SIM_TCC_PREFLIGHT=1 swift test --filter InstalledServerPermissionPreflightTests
+```
+
+That fallback is deployment mode `signedHostApp`. Complete the Task 17 gate by
+calling `doctor` with `requestPermissions=false` once through the installed
+client and once through the actual MCP host, then record exactly one verified
+mode in `docs/verification/simulator-contracts/tcc-attribution.json`. Do not
+create that file from assumptions. If neither mode keeps both grants, stop for
+a design amendment.
+
+The verified 2026-07-16 acceptance selected `stableBinary` at
+`~/.simulator-mcp/bin/simulator-mcp`; both installed-client and
+Claude-host `doctor(false)` calls retained Screen Recording and Accessibility.
+The evidence remains machine-specific and is recorded in
+`docs/verification/simulator-contracts/tcc-attribution.json`.
+
+The evidence file is fail-closed and uses this shape; replace every sample
+value with the observed installed-client and real-host results:
+
+```json
+{
+  "deploymentMode": "stableBinary",
+  "executablePath": "/Users/you/.simulator-mcp/bin/simulator-mcp",
+  "responsibleProcess": { "name": "claude", "pid": 1234 },
+  "signature": {
+    "identity": "simulator-mcp-local",
+    "signingIdentifier": "simulator-mcp"
+  },
+  "installedClientDoctor": {
+    "requestPermissions": false,
+    "executablePath": "/Users/you/.simulator-mcp/bin/simulator-mcp",
+    "signatureKind": "stable",
+    "signingIdentifier": "simulator-mcp",
+    "screenRecordingGranted": true,
+    "accessibilityGranted": true
+  },
+  "actualMCPHostDoctor": {
+    "requestPermissions": false,
+    "executablePath": "/Users/you/.simulator-mcp/bin/simulator-mcp",
+    "signatureKind": "stable",
+    "signingIdentifier": "simulator-mcp",
+    "screenRecordingGranted": true,
+    "accessibilityGranted": true
+  }
+}
+```
+
+## MCP host configuration
+
+Use the executable selected by `tcc-attribution.json`; never register a
+`.build` product.
+
+For Claude Code with the stable binary:
+
+```sh
+claude mcp add garmin-sim -- "$HOME/.simulator-mcp/bin/simulator-mcp"
+```
+
+For Codex, add the selected path to `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.garmin-sim]
+command = "/Users/you/.simulator-mcp/bin/simulator-mcp"
+```
+
+For signed-host mode, replace the command in either configuration with
+`~/.simulator-mcp/SimulatorMCPHost.app/Contents/MacOS/simulator-mcp-host`.
+
+## Tools
+
+Every call returns a typed envelope in `structuredContent` and the identical
+JSON as the first text content item. Success is `{ok:true,result:...}` with
+`isError=false`. Failure is `{ok:false,error:{code,message,fix,details?}}` with
+`isError=true`; the concrete `fix` is never empty.
+
+| Tool | Arguments | Result and error behavior |
+|---|---|---|
+| `doctor` | `requestPermissions?` (default `false`) | SDK, Java, simulator, stable signature, responsible-process note, Screen Recording and Accessibility preflights. Permission prompts occur only when explicitly requested. |
+| `list_sdks` | none | Installed SDK paths/versions and the active resolution source. Missing SDK state is actionable. |
+| `list_devices` | `projectPath?`, `jungle?`, `sdk?` | Installed/manifest-filtered devices. v1 always reports `inputSupported=false`, `buttons=[]`, and `inputProfile=null`. |
+| `build` | `projectPath`; optional `device`, `sdk`, `jungle`, `developerKey`, `release`, `unitTests` | Artifact identity plus structured diagnostics. Ordinary compiler errors return `succeeded=false`; incompatible build flags are rejected. |
+| `sim_start` | `sdk?` | Verified ready status for the exact SDK. A running different SDK returns `sdk_mismatch`. |
+| `sim_stop` | none | Confirmed `not_running` status after session and simulator cleanup. |
+| `sim_status` | none | State, operation, PID, SDK, current device, and lease holder without taking the lease. |
+| `run_app` | `projectPath`; optional `device`, `sdk`, `jungle`, `developerKey`, `rebuild` | Verified session ID, device, PRG, SDK, and rebuild state only after an exact launcher connection. |
+| `run_tests` | `projectPath`; optional `device`, `sdk`, `jungle`, `developerKey`, `testFilter` | Transcript-authoritative totals and every per-test result; the child exit code is not trusted. |
+| `get_logs` | optional `sessionId`, `sinceToken`, `limit` | Bounded lines, crash state, termination data, dropped count, and next cursor. |
+| `screenshot` | `savePath?` | PNG image content plus dimensions, simulator PID, saved path, and `appDisplayRect`. Permission denial names the exact onboarding fix. |
+| `set_gps_position` | `lat`, `lon` | Checked coordinates and simulator PID after semantic Accessibility automation and dialog-close proof. |
+
+Button automation is intentionally not registered in v1 because both approved
+background-input evidence gates failed closed.
+
+## Build and test
+
+Unit tests need no simulator or TCC grant:
+
+```sh
+swift package resolve
+swift build
+swift test
+make build
+```
+
+After signing, onboarding, host restart, and verified attribution:
+
+```sh
+SIM_INTEGRATION=1 SIM_DEVELOPER_KEY="$SIM_DEVELOPER_KEY" \
+  swift test --filter InstalledServerIntegrationTests
+```
+
+`make integration` enforces the same two environment variables. The installed
+suite crosses only the stdio MCP boundary and proves fixture logs, exact test
+results, an app-owned red pixel patch, static GPS observation, and cleanup.
+The complete flow was additionally verified end to end against a real
+Connect IQ project driven through Claude Code.
+
+## State semantics
+
+SDK resolution is explicit parameter, then `CIQ_SDK`, active SDK pointer, then
+newest installed semantic version. Simulator operations compare the requested
+SDK with the running SDK; on `sdk_mismatch`, call `sim_stop`, then `sim_start`
+with the desired SDK.
+
+Screenshot and GPS have no device override: they use the current device set by
+the latest verified run. If there is no current device, run an app or test on a
+device first. One current app session remains readable after exit. A new
+verified session replaces it; old cursors then fail with `stale_session` and
+name the newer session instead of reading unrelated logs.
+
+The simulator lease is `~/.simulator-mcp/sim.lock`. Never delete that lock
+file. A dead owner releases `flock` automatically; unlinking the pathname can
+split mutual exclusion across two inodes.
+
+## Troubleshooting
+
+1. Run `doctor` first and apply every reported fix, including the exact
+   executable path and host-restart instruction.
+2. For `sdk_mismatch`, stop the simulator and restart it with the requested
+   SDK; do not mix `monkeydo` and simulator versions.
+3. For TCC denial, rerun onboarding, grant the reported stable binary or signed
+   host, and fully restart the responsible MCP host.
+4. For a busy lease, inspect the reported holder PID and operation. Do not
+   delete `sim.lock`.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

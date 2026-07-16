@@ -1,0 +1,12 @@
+{
+  "label": "8.4.1-full",
+  "capturedOn": "2026-07-12T19:06:11.192138+02:00",
+  "invocation": [
+    "/Users/dev/Library/Application Support/Garmin/ConnectIQ/Sdks/connectiq-sdk-mac-8.4.1-2026-02-03-e9f77eeaa/bin/monkeydo",
+    "/private/tmp/simulator-mcp-fixture/transcriptprobe-8.4.1.prg",
+    "fenix6xpro",
+    "-t"
+  ],
+  "exitCode": 1,
+  "eventCount": 28
+}

@@ -1,0 +1,47 @@
+{
+  "axMessagingTimeoutSeconds" : 1,
+  "dialogClosed" : true,
+  "externalCleanupAudit" : {
+    "checkedOn" : "2026-07-15T17:48:34Z",
+    "fixtureBinRemoved" : true,
+    "matchCount" : 0,
+    "output" : "",
+    "pattern" : "ConnectIQ.app/Contents/MacOS/simulator|monkeydo|MonkeyDoDeux|swift-test|simulator-mcpPackageTests",
+    "pgrepExitStatus" : 1
+  },
+  "fixtureHashes" : {
+    "8.4.1" : "f33c7e91b173d0c1430954dc726c2fa64578971ca6c459218962b195ffb40ad6",
+    "9.1.0" : "cb343baa9174fba00c81c92bf44ad7a0691ae64b7bd90def294de3a999621302"
+  },
+  "menuPath" : [
+    "Settings",
+    "Set Position"
+  ],
+  "observationMode" : "position_get_info_poll",
+  "publicFixture" : {
+    "device" : "fenix6xpro",
+    "gpsMarker" : "FIXTURE_GPS 48.1351 11.5820",
+    "latitude" : 48.1351,
+    "launchMarker" : "FIXTURE_STARTED",
+    "longitude" : 11.582,
+    "sdkVersion" : "9.1.0",
+    "simulatorPid" : 84329,
+    "simulatorStopped" : true
+  },
+  "recordedOn" : "2026-07-15T17:44:46Z",
+  "schemaVersion" : 1,
+  "sdks" : [
+    "8.4.1",
+    "9.1.0"
+  ],
+  "selectedRelationships" : {
+    "defaultButton" : "AXDefaultButton is a direct-child AXButton advertising AXPress",
+    "field" : "exactly one AXTextField in the dialog subtree and a direct child of that dialog",
+    "instruction" : "exactly one direct-child AXStaticText",
+    "instructionValue" : "Enter the current position in decimal degrees (latitude, longitude)"
+  },
+  "sourceCaptureHashes" : {
+    "8.4.1" : "ca5c84d29e8bdae716f56e9ad86d52aa3f42d2731453fdc15b9946e593b80e4c",
+    "9.1.0" : "9d33e6da266159a6449b5c43064ed005955d484cb41924471a9eeda26f7fcf01"
+  }
+}
