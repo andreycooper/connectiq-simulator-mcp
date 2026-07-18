@@ -546,24 +546,21 @@ public struct DisplayRect: Codable, Equatable, Sendable {
 // MARK: - press_button
 
 public struct PressButtonResult: Codable, Equatable, Sendable {
-    public let device: String
-    public let profile: String
     public let button: String
-    public let holdMs: Int
-    public let deliveredInBackground: Bool
+    public let pressType: String
+    public let transport: String
+    public let simulatorPid: Int32
 
     public init(
-        device: String,
-        profile: String,
         button: String,
-        holdMs: Int,
-        deliveredInBackground: Bool
+        pressType: String,
+        transport: String,
+        simulatorPid: Int32
     ) {
-        self.device = device
-        self.profile = profile
         self.button = button
-        self.holdMs = holdMs
-        self.deliveredInBackground = deliveredInBackground
+        self.pressType = pressType
+        self.transport = transport
+        self.simulatorPid = simulatorPid
     }
 }
 

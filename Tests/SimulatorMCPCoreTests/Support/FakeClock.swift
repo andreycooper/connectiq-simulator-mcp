@@ -48,6 +48,7 @@ public final class FakeClock: Clock, @unchecked Sendable {
     private let lock = NSLock()
     private var currentOffset: Duration = .zero
     private var waiters: [UUID: (deadline: Instant, continuation: CheckedContinuation<Void, Error>)] = [:]
+    private var registrationWaiters: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
 
     public init() {}
 
@@ -61,16 +62,33 @@ public final class FakeClock: Clock, @unchecked Sendable {
     /// its cancellation-aware suspension before cancelling it.
     public var pendingSleepCount: Int { withLock { waiters.count } }
 
+    /// Deterministic registration handshake for tests that must prove a
+    /// deadline sleeper exists before advancing the fake clock. This avoids
+    /// scheduler-dependent `Task.yield()` loops at call sites.
+    public func waitUntilPendingSleepCount(_ count: Int) async {
+        await withCheckedContinuation { continuation in
+            let resumeNow = withLock {
+                if waiters.count >= count { return true }
+                registrationWaiters.append((count, continuation))
+                return false
+            }
+            if resumeNow { continuation.resume() }
+        }
+    }
+
     public func sleep(until deadline: Instant, tolerance: Duration? = nil) async throws {
         let id = UUID()
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                let registration: SleepRegistration = withLock {
-                    if Task.isCancelled { return .cancelled }
-                    if currentOffset >= deadline.offset { return .due }
+                let (registration, ready) = withLock { () -> (SleepRegistration, [CheckedContinuation<Void, Never>]) in
+                    if Task.isCancelled { return (.cancelled, []) }
+                    if currentOffset >= deadline.offset { return (.due, []) }
                     waiters[id] = (deadline, continuation)
-                    return .waiting
+                    let ready = registrationWaiters.filter { waiters.count >= $0.count }.map(\.continuation)
+                    registrationWaiters.removeAll { waiters.count >= $0.count }
+                    return (.waiting, ready)
                 }
+                ready.forEach { $0.resume() }
                 switch registration {
                 case .waiting:
                     break

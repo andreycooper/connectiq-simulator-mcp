@@ -14,11 +14,10 @@ struct ToolContractTests {
     @Test("success carries structuredContent and an identical JSON text block")
     func testSuccessEnvelope() async throws {
         let sample = PressButtonResult(
-            device: "fenix6xpro",
-            profile: "fenix6xpro-five-button",
             button: "select",
-            holdMs: 50,
-            deliveredInBackground: true
+            pressType: "press",
+            transport: "protocol",
+            simulatorPid: 4242
         )
 
         let result = try ToolResultFactory.success(sample)

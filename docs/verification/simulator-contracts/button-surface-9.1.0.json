@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "sdkVersion": "9.1.0",
+  "capturedOn": "2026-07-17",
+  "endpointSource": "Installed public server sim_start/run_app plus ButtonProbeHarness.withSerializedProbe(.pressButton, .currentReady); exactly one validated loopback endpoint.",
+  "surfaces": {
+    "shell": {
+      "helpTranscript": {"path": "task-3/argument-mode-9.1.0.txt", "sha256": "adc1725b09f9f648359423a2ab73f974a38ae0d31f509a07cb17deee05a9df92", "exitCode": 0},
+      "commands": [
+        {"form": ["--list_transports"], "success": {"exitCode": 0, "shape": "lists tcp transport and default 127.0.0.1:1234; closes shell"}, "transcript": "task-3/shell-mdd-9.1.0.txt"},
+        {"form": "connected stdin: help\\nquit\\n", "result": {"exitCode": null, "shape": "transport connects; post-MDD result includes Timeout waiting for device info, Socket Error in packet header 0, Connection Finished; partial stdout is preserved"}, "transcript": "task-3/shell-mdd-9.1.0.txt"},
+        {"form": "connected stdin: __task3_invalid_command__\\nquit\\n", "result": {"exitCode": null, "shape": "same documented connection timeout/error shape; no command response"}, "transcript": "task-3/shell-mdd-9.1.0.txt"},
+        {"form": ["__definitely-invalid-task3-option"], "error": {"exitCode": 0, "shape": "connected stdout reports Command not found and closes shell"}, "transcript": "task-3/argument-mode-9.1.0.txt"},
+        {"form": ["help"], "result": {"exitCode": 1, "shape": "after FIXTURE_STARTED, transport connects then reports Timeout waiting for device info, Socket Error in packet header 0, Connection Finished; this is a protocol/session failure, not command enumeration"}, "transcript": "task-3/shell-diagnosis-9.1.0.txt"},
+        {"form": ["__task3_invalid_command__"], "result": {"exitCode": 1, "shape": "same transport/session failure as help; no command-specific response observed"}, "transcript": "task-3/shell-diagnosis-9.1.0.txt"}
+      ]
+    },
+    "mdd": {
+      "commands": [
+        {"script": "help all\\nquit\\n", "success": {"exitCode": 0, "shape": "complete breakpoints/data/running/stack/status/support command inventory; exit 0"}, "transcript": "task-3/shell-mdd-9.1.0.txt"},
+        {"script": "help __task3_invalid_command__\\nquit\\n", "error": {"exitCode": 0, "shape": "Undefined command: __task3_invalid_command__. Try help.; app is killed; exit 0"}, "transcript": "task-3/shell-mdd-9.1.0.txt"}
+      ]
+    },
+    "jar": {
+      "classes": ["com.garmin.monkeybrains.resourcecompiler.drawables.selectables.Button", "com.garmin.connectiq.common.signing.KeyUtils", "com.garmin.connectiq.common.devices.DevicesJsonReader", "com.garmin.monkeybrains.monkeymotion.MonkeyMotion", "com.garmin.connectiq.common.devices.DevicesJsonReader$DeviceSimulatorKey"],
+      "mappingTables": [],
+      "finding": "The lexical inventory is recorded verbatim. Successful javap shows Button is a drawable resource class, KeyUtils is signing-key material, DevicesJsonReader reads device metadata, and MonkeyMotion exposes only its main entry point; no input transport or key-number mapping table is present.",
+      "transcript": {"path": "task-3/jar-javap-9.1.0.txt", "sha256": "59e2d4eec94d8856c842a17009bbf81c9e13b39f325c38baa1688add9a8cfa06", "command": "unzip -Z1 ... | grep lexical; javap -classpath ... -public selected classes"},
+      "nestedClassInspection": {"class": "com.garmin.connectiq.common.devices.DevicesJsonReader$DeviceSimulatorKey", "transcript": "task-3/device-simulator-key-9.1.0.txt", "sha256": "96ec695505b8c08cbb36cac7d1d87a519246f416e284310bb4388379a14db300"}
+    },
+    "binaries": {
+      "grammars": [
+        {"binary": "bin/shell", "strings": ["--transport", "--transport_args", "--list_transports", "--help", "shell command arguments"]},
+        {"binary": "ConnectIQ.app/Contents/MacOS/simulator", "stringsFinding": "generic wxKeyEvent/wxButton and non-semantic key/button strings only; no callable input grammar or mapping table"}
+      ],
+      "transcript": {"path": "task-3/binary-strings-9.1.0.txt", "sha256": "c88bd5cd574441ded78a25405d83d28f6ecc0ae6b23948828ce201e7e3c71c75"}
+    },
+    "wire": {
+      "observations": [{"client": "shell invalid command over TCP through LoopbackCaptureProxy", "transcript": "task-3/wire-9.1.0.bin", "sha256": "19c495b2de6824639c775e01221f26164d512841d45e4e0ccbd7a0460830abae", "observed": "client->server 12-byte framed request followed by server->client 8-byte UNKNOWN response"}]
+    }
+  },
+  "nonCandidates": [
+    {"vocabulary": "buttonNumber", "source": "simulator binary strings", "classification": "non-candidate", "reason": "no authoritative command grammar or number-to-key mapping table"},
+    {"vocabulary": "keyCode", "source": "simulator binary strings", "classification": "non-candidate", "reason": "no authoritative key-code mapping table"},
+    {"vocabulary": "m_buttonId/m_buttonCount", "source": "simulator binary strings", "classification": "non-candidate", "reason": "internal implementation vocabulary; no callable transport or mapping provenance"}
+  ],
+  "rung1": {"state": "closed", "closureBasis": "final negative post-readiness shell protocol/session evidence plus complete MDD/JAR/binary/wire disposition", "candidateDecision": "final: no fully-provenanced candidate exists; observed buttonNumber/keyCode/m_buttonId/m_buttonCount vocabulary is non-candidate", "nextBranch": "Task 4 -> Task 6"},
+  "candidates": [],
+  "viability": null
+}

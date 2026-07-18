@@ -9,6 +9,17 @@ struct FakeInvocation: Sendable {
     let environment: [String: String]?
     let workingDirectory: URL?
     let timeout: Duration?
+    let stdinData: Data?
+
+    init(executable: URL, arguments: [String], environment: [String: String]?,
+         workingDirectory: URL?, timeout: Duration?, stdinData: Data? = nil) {
+        self.executable = executable
+        self.arguments = arguments
+        self.environment = environment
+        self.workingDirectory = workingDirectory
+        self.timeout = timeout
+        self.stdinData = stdinData
+    }
 
     /// The value following `flag`, if present.
     func argumentValue(after flag: String) -> String? {
@@ -62,6 +73,24 @@ final class FakeProcessRunner: ProcessRunning, @unchecked Sendable {
         record(invocation)
         return FakeRunningProcess(
             invocation: invocation, handler: handler, onStdout: onStdout, onStderr: onStderr)
+    }
+
+    func start(
+        executable: URL,
+        arguments: [String],
+        environment: [String: String]?,
+        workingDirectory: URL?,
+        timeout: Duration?,
+        stdinData: Data?,
+        onStdout: (@Sendable (Data) -> Void)?,
+        onStderr: (@Sendable (Data) -> Void)?
+    ) async throws -> any RunningProcess {
+        let invocation = FakeInvocation(executable: executable, arguments: arguments,
+            environment: environment, workingDirectory: workingDirectory, timeout: timeout,
+            stdinData: stdinData)
+        record(invocation)
+        return FakeRunningProcess(invocation: invocation, handler: handler,
+            onStdout: onStdout, onStderr: onStderr)
     }
 }
 

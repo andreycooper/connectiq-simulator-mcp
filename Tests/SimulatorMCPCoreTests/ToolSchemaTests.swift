@@ -211,11 +211,10 @@ struct ToolSchemaTests {
             {
                 try ToolResultFactory.success(
                     PressButtonResult(
-                        device: "fenix6xpro",
-                        profile: "fenix6xpro-five-button",
                         button: "select",
-                        holdMs: 50,
-                        deliveredInBackground: true
+                        pressType: "press",
+                        transport: "protocol",
+                        simulatorPid: 4242
                     ))
             }
         ),

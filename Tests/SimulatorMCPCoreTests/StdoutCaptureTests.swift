@@ -7,20 +7,23 @@ struct StdoutCaptureTests {
     func cancelledWaiterNeverCaptures() async throws {
         let holderGate = StdoutCaptureGate()
         let bodyRecorder = StdoutCaptureRecorder()
+        let waiterQueued = StdoutCaptureSignal()
 
         let holder = Task {
             try await captureStdout {
                 await holderGate.wait()
             }
         }
-        #expect(await waitForStdoutCapture { await stdoutCaptureQueueDepth() == 1 })
+        await holderGate.waitUntilStarted()
 
         let cancelled = Task {
-            try await captureStdout {
+            try await captureStdout({
                 await bodyRecorder.recordRun()
-            }
+            }, onQueued: {
+                waiterQueued.signal()
+            })
         }
-        #expect(await waitForStdoutCapture { await stdoutCaptureQueueDepth() == 2 })
+        await waiterQueued.wait()
 
         cancelled.cancel()
         do {
@@ -29,25 +32,33 @@ struct StdoutCaptureTests {
         } catch is CancellationError {
             // Expected.
         }
-        #expect(await waitForStdoutCapture { await stdoutCaptureQueueDepth() == 1 })
-
         await holderGate.open()
         _ = try await holder.value
 
         let finalCapture = try await captureStdout {}
         #expect(finalCapture.isEmpty)
         #expect(await bodyRecorder.runCount == 0)
-        #expect(await stdoutCaptureQueueDepth() == 0)
     }
 }
 
 private actor StdoutCaptureGate {
+    private var hasStarted = false
     private var isOpen = false
+    private var startWaiters: [CheckedContinuation<Void, Never>] = []
     private var waiters: [CheckedContinuation<Void, Never>] = []
 
     func wait() async {
+        hasStarted = true
+        let pending = startWaiters
+        startWaiters.removeAll()
+        for waiter in pending { waiter.resume() }
         guard !isOpen else { return }
         await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func waitUntilStarted() async {
+        guard !hasStarted else { return }
+        await withCheckedContinuation { startWaiters.append($0) }
     }
 
     func open() {
@@ -63,12 +74,30 @@ private actor StdoutCaptureRecorder {
     func recordRun() { runCount += 1 }
 }
 
-private func waitForStdoutCapture(
-    _ predicate: @Sendable () async -> Bool
-) async -> Bool {
-    for _ in 0..<10_000 {
-        if await predicate() { return true }
-        await Task.yield()
+private final class StdoutCaptureSignal: @unchecked Sendable {
+    private let lock = NSLock()
+    private var signaled = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func signal() {
+        lock.lock()
+        signaled = true
+        let pending = waiters
+        waiters.removeAll()
+        lock.unlock()
+        for waiter in pending { waiter.resume() }
     }
-    return false
+
+    func wait() async {
+        await withCheckedContinuation { continuation in
+            lock.lock()
+            if signaled {
+                lock.unlock()
+                continuation.resume()
+            } else {
+                waiters.append(continuation)
+                lock.unlock()
+            }
+        }
+    }
 }

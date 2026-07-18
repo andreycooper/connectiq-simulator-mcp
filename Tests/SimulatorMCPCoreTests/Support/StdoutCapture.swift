@@ -14,8 +14,11 @@ import Foundation
 /// AGENTS.md). Originally written for `MCPBootstrapTests`; reused as-is by
 /// every caller that needs exactly the same real-fd capture. Because fd 1 is
 /// process-global, the serializer spans the complete async body and pipe read.
-func captureStdout(_ body: () async throws -> Void) async throws -> Data {
-    try await stdoutCaptureSerializer.acquire()
+func captureStdout(
+    _ body: () async throws -> Void,
+    onQueued: (@Sendable () -> Void)? = nil
+) async throws -> Data {
+    try await stdoutCaptureSerializer.acquire(onQueued: onQueued)
     do {
         try Task.checkCancellation()
         let data = try await captureStdoutExclusively(body)
@@ -43,9 +46,7 @@ private actor StdoutCaptureSerializer {
     private var active = false
     private var waiters: [Waiter] = []
 
-    var queueDepth: Int { (active ? 1 : 0) + waiters.count }
-
-    func acquire() async throws {
+    func acquire(onQueued: (@Sendable () -> Void)? = nil) async throws {
         try Task.checkCancellation()
         guard active else {
             active = true
@@ -56,6 +57,7 @@ private actor StdoutCaptureSerializer {
             try await withCheckedThrowingContinuation {
                 (continuation: CheckedContinuation<Void, Error>) in
                 waiters.append(Waiter(id: id, continuation: continuation))
+                onQueued?()
             }
         } onCancel: {
             Task { await self.cancel(id: id) }
@@ -75,10 +77,6 @@ private actor StdoutCaptureSerializer {
         let waiter = waiters.remove(at: index)
         waiter.continuation.resume(throwing: CancellationError())
     }
-}
-
-func stdoutCaptureQueueDepth() async -> Int {
-    await stdoutCaptureSerializer.queueDepth
 }
 
 private func captureStdoutExclusively(

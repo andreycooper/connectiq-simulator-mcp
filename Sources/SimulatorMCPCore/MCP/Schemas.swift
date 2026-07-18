@@ -308,13 +308,12 @@ public enum Schemas {
 
     public static let pressButtonResult: Value = object(
         properties: [
-            "device": string,
-            "profile": string,
             "button": string,
-            "holdMs": integer,
-            "deliveredInBackground": boolean,
+            "pressType": stringEnum(["press", "hold"]),
+            "transport": stringEnum(["protocol", "ax-keyboard-post", "focused-keys"]),
+            "simulatorPid": integer,
         ],
-        required: ["device", "profile", "button", "holdMs", "deliveredInBackground"]
+        required: ["button", "pressType", "transport", "simulatorPid"]
     )
 
     public static let setGpsPositionResult: Value = object(

@@ -52,6 +52,33 @@ struct InstalledServerClientTests {
         await client.stop()
     }
 
+    @Test("installed v1 boundary excludes input and reports no input capability")
+    func installedV1InputContract() async throws {
+        guard ProcessInfo.processInfo.environment["SIM_V1_INSTALLED_CHECK"] == "1" else {
+            return
+        }
+        let executable = FileManager.default.homeDirectoryForCurrentUser
+            .appending(path: ".simulator-mcp/bin/simulator-mcp")
+        let client = InstalledServerClient(executableURL: executable)
+        try await client.start()
+        defer { Task { await client.stop() } }
+
+        let tools = try await client.listTools()
+        let response: InstalledToolResponse<ListDevicesResult> = try await client.callTool(
+            "list_devices", as: ListDevicesResult.self)
+        let devices = try #require(response.envelope.result?.devices)
+        print("INSTALLED_V1_TOOLS " + tools.sorted().joined(separator: ","))
+        for device in devices {
+            let profile = device.inputProfile ?? "null"
+            print("INSTALLED_V1_DEVICE \(device.deviceId) inputSupported=\(device.inputSupported) buttons=\(device.buttons) inputProfile=\(profile)")
+        }
+        #expect(!tools.contains("press_button"))
+        #expect(response.isError == false)
+        #expect(devices.allSatisfy {
+            !$0.inputSupported && $0.buttons.isEmpty && $0.inputProfile == nil
+        })
+    }
+
     @Test("failed initialization leaves no child owned by the client")
     func failedInitializationCleansUp() async throws {
         let client = InstalledServerClient(
