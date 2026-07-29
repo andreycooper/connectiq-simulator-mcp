@@ -132,6 +132,18 @@ struct Task17InstallContractTests {
         #expect(claude == "@AGENTS.md")
     }
 
+    @Test("v0.1.2 release metadata preserves the public v1 contract")
+    func releaseMetadata() throws {
+        let main = try source("Sources/SimulatorMCP/main.swift")
+        let makefile = try source("Makefile")
+
+        #expect(main.contains("version: \"0.1.2\""))
+        #expect(makefile.contains(
+            "/usr/bin/plutil -insert CFBundleShortVersionString -string 0.1.2"))
+        #expect(!main.contains("0.2.0"))
+        #expect(!main.contains("SIM_BUTTON_QUALIFICATION"))
+    }
+
     private var root: URL {
         URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent() // file

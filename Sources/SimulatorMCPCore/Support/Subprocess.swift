@@ -345,7 +345,7 @@ public struct Subprocess: ProcessRunning, Sendable {
         try? stderrPipe.fileHandleForWriting.close()
     }
 
-    private static func writeBoundedStdin(
+    static func writeBoundedStdin(
         _ data: Data, to handle: FileHandle, timeout: Duration, executable: URL,
         onBlocked: (@Sendable () -> Void)?
     ) async throws {
@@ -362,18 +362,18 @@ public struct Subprocess: ProcessRunning, Sendable {
         var offset = 0
         while offset < data.count {
             try Task.checkCancellation()
-            if deadline.hasExpired {
-                throw ToolError(code: "stdin_write_timeout",
-                    message: "Writing bounded stdin to \(executable.path) exceeded \(timeout).",
-                    fix: "Use a child that consumes stdin, reduce the payload, or increase the timeout.",
-                    details: ["executable": .string(executable.path)])
-            }
             let count = data.withUnsafeBytes { rawBuffer -> Int in
                 guard let base = rawBuffer.baseAddress else { return 0 }
                 return Darwin.write(fd, base.advanced(by: offset), data.count - offset)
             }
             if count > 0 { offset += count; continue }
             if count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) {
+                if deadline.hasExpired {
+                    throw ToolError(code: "stdin_write_timeout",
+                        message: "Writing bounded stdin to \(executable.path) exceeded \(timeout).",
+                        fix: "Use a child that consumes stdin, reduce the payload, or increase the timeout.",
+                        details: ["executable": .string(executable.path)])
+                }
                 blockedObserver?()
                 blockedObserver = nil
                 try await deadline.sleepUntilNextPoll(maximumInterval: .milliseconds(2))

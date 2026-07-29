@@ -108,6 +108,23 @@ struct SubprocessTests {
         }
     }
 
+    @Test("a closed stdin pipe beats an already-expired blocked-write deadline")
+    func closedStdinBeatsExpiredDeadline() async throws {
+        let pipe = Pipe()
+        try pipe.fileHandleForReading.close()
+        defer { try? pipe.fileHandleForWriting.close() }
+
+        do {
+            try await Subprocess.writeBoundedStdin(
+                Data("probe".utf8), to: pipe.fileHandleForWriting, timeout: .zero,
+                executable: URL(fileURLWithPath: "/closed-stdin-probe"), onBlocked: nil)
+            Issue.record("closed stdin should fail the bounded write")
+        } catch let error as ToolError {
+            #expect(error.code == "stdin_write_failed")
+            #expect(!error.fix.isEmpty)
+        }
+    }
+
     @Test("an early child exit translates closed stdin without SIGPIPE")
     func earlyChildExitIsTranslated() async throws {
         let runner: any ProcessRunning = Subprocess()

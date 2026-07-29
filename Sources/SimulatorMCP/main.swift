@@ -7,7 +7,7 @@ enum SimulatorMCPMain {
         let registry = ToolRegistry(handlers: ToolHandlers.live())
         let server = Server(
             name: "simulator-mcp",
-            version: "0.1.1",
+            version: "0.1.2",
             capabilities: .init(tools: .init(listChanged: false))
         )
 

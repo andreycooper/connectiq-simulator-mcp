@@ -196,19 +196,28 @@ struct MonkeydoConnectionProbeTests {
         let runner = FakeProcessRunner { _ in
             (0, Data(sequence.next().utf8), Data())
         }
+        let clock = FakeClock()
         let probe = MonkeydoConnectionProbe(
             processRunner: runner,
             identityReader: fixture.reader,
-            clock: ContinuousClock(),
+            clock: clock,
             serverPID: 500)
 
-        let verified = try await probe.waitUntilConnected(
-            owned: fixture.owned,
-            listeningEndpoints: fixture.listeners,
-            timeout: .seconds(1))
+        let task = Task {
+            try await ClockSupport.withDeadline(.seconds(1), clock: clock) {
+                try await probe.waitUntilConnected(
+                    owned: fixture.owned,
+                    listeningEndpoints: fixture.listeners,
+                    timeout: .seconds(1))
+            }
+        }
+        await clock.waitUntilPendingSleepCount(2)
+        clock.advance(by: .milliseconds(100))
+        let verified = try await task.value
 
         #expect(runner.invocations.count == 4)
         #expect(verified.localEndpoint.port == 52200)
+        #expect(clock.pendingSleepCount == 0)
     }
 
     @Test("a kernel-listed child that cannot be inspected fails closed before lsof")
