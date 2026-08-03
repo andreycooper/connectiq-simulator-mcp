@@ -1,3 +1,4 @@
+@preconcurrency import AppKit
 import CoreGraphics
 import Foundation
 import ImageIO
@@ -8,6 +9,218 @@ import SimulatorMCPCore
 
 private let integrationEnabled =
     ProcessInfo.processInfo.environment["SIM_INTEGRATION"] == "1"
+
+struct InstalledButtonQualificationMatrix: Equatable, Sendable {
+    let sdkVersions: [String]
+    let shortButtons: [String]
+    let includesHold: Bool
+}
+
+func installedButtonQualificationMatrix(smoke: Bool) -> InstalledButtonQualificationMatrix {
+    if smoke {
+        return InstalledButtonQualificationMatrix(
+            sdkVersions: ["8.4.1"], shortButtons: ["enter"], includesHold: false)
+    }
+    return InstalledButtonQualificationMatrix(
+        sdkVersions: ["8.4.1", "9.1.0"],
+        shortButtons: ["enter", "esc", "up", "down", "menu"],
+        includesHold: true)
+}
+
+final class QualificationAttemptRecorder: @unchecked Sendable {
+    let sdk: String
+    let button: String
+    let pressType: String
+    private let lock = NSLock()
+    private var phases: [String] = []
+    private var phaseWaiters: [(phase: String, continuation: CheckedContinuation<Void, Never>)] = []
+
+    init(sdk: String, button: String, pressType: String) {
+        self.sdk = sdk
+        self.button = button
+        self.pressType = pressType
+    }
+
+    func record(_ phase: String, _ detail: String = "") {
+        let suffix = detail.isEmpty ? "" : " detail=\(detail.replacingOccurrences(of: "\n", with: "\\n"))"
+        let line = "phase=\(phase) monotonicNanos=\(DispatchTime.now().uptimeNanoseconds)\(suffix)"
+        lock.lock()
+        phases.append(line)
+        let ready = phaseWaiters.filter { $0.phase == phase }.map(\.continuation)
+        phaseWaiters.removeAll { $0.phase == phase }
+        lock.unlock()
+        ready.forEach { $0.resume() }
+    }
+
+    var recordedPhases: [String] {
+        lock.lock(); defer { lock.unlock() }; return phases
+    }
+
+    func waitUntilRecorded(_ phase: String) async {
+        await withCheckedContinuation { continuation in
+            lock.lock()
+            if phases.contains(where: { $0.hasPrefix("phase=\(phase) ") }) {
+                lock.unlock()
+                continuation.resume()
+            } else {
+                phaseWaiters.append((phase, continuation))
+                lock.unlock()
+            }
+        }
+    }
+
+    func dump() {
+        lock.lock(); let snapshot = phases; lock.unlock()
+        Log.err("qualification_attempt sdk=\(sdk) button=\(button) press_type=\(pressType)")
+        snapshot.forEach { Log.err("qualification_attempt \($0)") }
+    }
+}
+
+func startQualificationFrontmostSampler(
+    attempt: QualificationAttemptRecorder,
+    // Covers the declared request, 30-second marker window, Simulator
+    // foreground persistence assertions, sim_stop, and six-second client stop budget.
+    timeout: Duration = .seconds(75),
+    pollInterval: Duration = .milliseconds(10),
+    simulatorPID: pid_t? = nil,
+    frontmostPID: @escaping @Sendable () -> pid_t?
+) -> Task<Void, Never> {
+    Task {
+        let started = ContinuousClock.now
+        let deadline = started.advanced(by: timeout)
+        var lastSampledPID: pid_t??
+        var polls = 0
+        while !Task.isCancelled, ContinuousClock.now < deadline {
+            let pid = frontmostPID()
+            polls += 1
+            if lastSampledPID == nil || lastSampledPID! != pid {
+                let source: String
+                if let simulatorPID {
+                    source = pid == simulatorPID ? "simulator" : pid.map(String.init) ?? "nil"
+                } else {
+                    source = pid.map(String.init) ?? "nil"
+                }
+                attempt.record(
+                    "frontmost_sample",
+                    "target=simulator_foreground_persistence source=\(source) "
+                        + "polls=\(polls) elapsed=\(started.duration(to: ContinuousClock.now))")
+                lastSampledPID = .some(pid)
+            }
+            try? await Task.sleep(for: pollInterval)
+        }
+        attempt.record(
+            "frontmost_sampler_final",
+            "target=simulator_foreground_persistence polls=\(polls) "
+                + "reason=\(Task.isCancelled ? "cleanup_completed" : "safety_bound_expired")")
+    }
+}
+
+enum QualificationCleanupOutcome: Equatable {
+    case success
+    case toolFailure(String)
+}
+
+func classifyQualificationSimStop(
+    _ response: InstalledToolResponse<SimStopResult>
+) -> QualificationCleanupOutcome {
+    do {
+        _ = try requireSuccess(response, tool: "sim_stop")
+        return .success
+    } catch {
+        return .toolFailure(String(reflecting: error))
+    }
+}
+
+private final class QualificationDiagnostics: @unchecked Sendable {
+    private let lock = NSLock()
+    private var attempts: [QualificationAttemptRecorder] = []
+    private var active: QualificationAttemptRecorder?
+    private var samplers: [UUID: Task<Void, Never>] = [:]
+
+    func start(sdk: String, button: String, pressType: String) -> QualificationAttemptRecorder {
+        let attempt = QualificationAttemptRecorder(sdk: sdk, button: button, pressType: pressType)
+        lock.lock(); attempts.append(attempt); active = attempt; lock.unlock()
+        return attempt
+    }
+
+    func finish(_ attempt: QualificationAttemptRecorder) {
+        lock.lock()
+        if active === attempt { active = nil }
+        lock.unlock()
+    }
+
+    func registerSampler(_ sampler: Task<Void, Never>) -> UUID {
+        let id = UUID()
+        lock.lock(); samplers[id] = sampler; lock.unlock()
+        return id
+    }
+
+    func finishSampler(_ id: UUID) async {
+        let sampler = takeSampler(id)
+        sampler?.cancel()
+        _ = await sampler?.result
+    }
+
+    private func takeSampler(_ id: UUID) -> Task<Void, Never>? {
+        lock.lock(); defer { lock.unlock() }
+        return samplers.removeValue(forKey: id)
+    }
+
+    func cancelSamplers() async {
+        let snapshot = takeSamplers()
+        snapshot.forEach { $0.cancel() }
+        for sampler in snapshot { _ = await sampler.result }
+    }
+
+    private func takeSamplers() -> [Task<Void, Never>] {
+        lock.lock(); defer { lock.unlock() }
+        let snapshot = Array(samplers.values)
+        samplers.removeAll(keepingCapacity: false)
+        return snapshot
+    }
+
+    func recordActive(_ phase: String, _ detail: String = "") {
+        lock.lock(); let attempt = active; lock.unlock()
+        attempt?.record(phase, detail)
+    }
+
+    func record(clientEvent: InstalledServerClientEvent) {
+        switch clientEvent {
+        case .requestWritten(let id, let method, let tool, let nanos):
+            recordActive("client_request_written", "id=\(id) method=\(method) tool=\(tool ?? "none") boundaryMonotonicNanos=\(nanos)")
+        case .responseReceived(let id, let method, let tool, let nanos):
+            recordActive("client_response_received", "id=\(id) method=\(method) tool=\(tool ?? "none") boundaryMonotonicNanos=\(nanos)")
+        case .stopStarted(let nanos):
+            recordActive("client_stop_started", "boundaryMonotonicNanos=\(nanos)")
+        case .stdinClosed(let nanos):
+            recordActive("client_stdin_closed", "boundaryMonotonicNanos=\(nanos)")
+        case .serverExited(let nanos):
+            recordActive("client_server_exited", "boundaryMonotonicNanos=\(nanos)")
+        case .terminateSent(let nanos):
+            recordActive("client_terminate_sent", "boundaryMonotonicNanos=\(nanos)")
+        case .stopCompleted(let nanos):
+            recordActive("client_stop_completed", "boundaryMonotonicNanos=\(nanos)")
+        case .emergencyCleanupStarted(let nanos):
+            recordActive("client_emergency_cleanup_started", "boundaryMonotonicNanos=\(nanos)")
+        case .emergencySIGKILLSent(let nanos):
+            recordActive("client_emergency_sigkill_sent", "boundaryMonotonicNanos=\(nanos)")
+        case .emergencyServerExited(let nanos):
+            recordActive("client_emergency_server_exited", "boundaryMonotonicNanos=\(nanos)")
+        case .emergencyCleanupCompleted(let nanos):
+            recordActive("client_emergency_cleanup_completed", "boundaryMonotonicNanos=\(nanos)")
+        }
+    }
+
+    func dumpAll() {
+        lock.lock(); let snapshot = attempts; lock.unlock()
+        snapshot.forEach { $0.dump() }
+    }
+
+    func dumpServerDiagnostics(sdk: String, stage: String, text: String) {
+        let escaped = text.replacingOccurrences(of: "\n", with: "\\n")
+        Log.err("qualification_server_diagnostics sdk=\(sdk) stage=\(stage) text=\(escaped)")
+    }
+}
 
 @Suite(.enabled(if: integrationEnabled), .serialized)
 struct InstalledServerIntegrationTests {
@@ -22,7 +235,7 @@ struct InstalledServerIntegrationTests {
             "SIM_DEVELOPER_KEY must name an external Connect IQ developer key")
         #expect(FileManager.default.isReadableFile(atPath: developerKey))
 
-        let fixture = root.appending(path: "Tests/fixtures/testapp", directoryHint: .isDirectory)
+        let fixture = root.appending(path: "Tests/fixtures/testapp")
         let client = InstalledServerClient(executableURL: executable)
         try await client.start()
 
@@ -207,6 +420,167 @@ struct InstalledServerIntegrationTests {
                     + "(ratio=\(ratio), displayRect=\(rect), samplePatch=\(patch), "
                     + "image=\(image.width)x\(image.height)).")
         }
+    }
+}
+
+@Suite("Installed button delivery", .enabled(if: integrationEnabled), .serialized)
+struct InstalledButtonDeliveryIntegrationTests {
+    /// Drives the published surface end to end on both verified SDKs. Delivery
+    /// is counted only from the fixture's own log markers: a successful tool
+    /// result is never treated as evidence that the simulator saw the key.
+    @Test("press_button delivers every verified button on both SDKs")
+    func buttonDelivery() async throws {
+        let root = repositoryRoot()
+        let executable = FileManager.default.homeDirectoryForCurrentUser
+            .appending(path: ".simulator-mcp/bin/simulator-mcp")
+        let developerKey = try #require(
+            ProcessInfo.processInfo.environment["SIM_DEVELOPER_KEY"],
+            "SIM_DEVELOPER_KEY must name an external Connect IQ developer key")
+        #expect(FileManager.default.isReadableFile(atPath: developerKey))
+        let fixture = root.appending(path: "Tests/fixtures/testapp", directoryHint: .isDirectory)
+        let installed = Dictionary(uniqueKeysWithValues: SdkLocator().installedSdks().map {
+            ($0.version.description, $0)
+        })
+
+        for sdkVersion in ["8.4.1", "9.1.0"] {
+            let sdk = try #require(installed[sdkVersion], "Required SDK \(sdkVersion) is not installed")
+            let client = InstalledServerClient(executableURL: executable)
+            do {
+                try await client.start()
+                try validateTask17ToolAdvertisement(try await client.listTools())
+
+                let devices = try requireSuccess(
+                    try await client.callTool(
+                        "list_devices", arguments: ["sdk": .string(sdk.root.path)],
+                        as: ListDevicesResult.self), tool: "list_devices")
+                let fenix = try #require(devices.devices.first { $0.deviceId == "fenix6xpro" })
+                #expect(fenix.inputSupported)
+                #expect(fenix.buttons == ["enter", "esc", "up", "down"])
+
+                _ = try await client.callTool("sim_stop", as: SimStopResult.self)
+                _ = try requireSuccess(
+                    try await client.callTool(
+                        "sim_start", arguments: ["sdk": .string(sdk.root.path)],
+                        as: SimStartResult.self), tool: "sim_start")
+                let run = try requireSuccess(
+                    try await client.callTool(
+                        "run_app",
+                        arguments: [
+                            "projectPath": .string(fixture.path),
+                            "device": .string("fenix6xpro"),
+                            "sdk": .string(sdk.root.path),
+                            "developerKey": .string(developerKey),
+                        ], as: RunAppResult.self), tool: "run_app")
+
+                let reader = FixtureMarkerReader(client: client, sessionId: run.sessionId)
+                let started = try await reader.wait(for: "FIXTURE_STARTED", timeout: .seconds(60))
+                #expect(started, Comment(rawValue: "SDK \(sdkVersion): no FIXTURE_STARTED"))
+
+                for (button, hold, marker) in [
+                    ("enter", nil, "FIXTURE_KEY enter PRESS"),
+                    ("esc", nil, "FIXTURE_KEY esc PRESS"),
+                    ("up", nil, "FIXTURE_KEY up PRESS"),
+                    ("down", nil, "FIXTURE_KEY down PRESS"),
+                    ("up", 1_000, "FIXTURE_KEY up HOLD"),
+                ] as [(String, Int?, String)] {
+                    var arguments: [String: JSONValue] = [
+                        "button": .string(button), "allowFocus": true,
+                    ]
+                    if let hold { arguments["holdMs"] = .int(hold) }
+                    let press = try requireSuccess(
+                        try await client.callTool(
+                            "press_button", arguments: arguments, as: PressButtonResult.self),
+                        tool: "press_button")
+                    #expect(press.button == button)
+                    #expect(press.pressType == ((hold ?? 0) >= 300 ? "hold" : "press"))
+                    let seen = try await reader.wait(for: marker, timeout: .seconds(15))
+                    #expect(seen, Comment(rawValue: "SDK \(sdkVersion): \(button) "
+                        + "hold=\(hold.map(String.init) ?? "none") produced no \(marker)"))
+                }
+
+                // A press that has to reclaim focus from a windowless
+                // application: this is the case that exposed both the stale
+                // frontmost observation and the front-window-owner mistake.
+                try await activateFinder()
+                let reclaimed = try requireSuccess(
+                    try await client.callTool(
+                        "press_button",
+                        arguments: ["button": .string("enter"), "allowFocus": true],
+                        as: PressButtonResult.self), tool: "press_button")
+                #expect(reclaimed.button == "enter")
+                let reclaimedSeen = try await reader.wait(
+                    for: "FIXTURE_KEY enter PRESS", timeout: .seconds(15))
+                #expect(reclaimedSeen, Comment(rawValue:
+                    "SDK \(sdkVersion): press after backgrounding produced no marker"))
+
+                // allowFocus=false must refuse rather than post into whatever
+                // application currently owns input.
+                try await activateFinder()
+                let refused = try await client.callTool(
+                    "press_button",
+                    arguments: ["button": .string("enter"), "allowFocus": false],
+                    as: PressButtonResult.self)
+                #expect(refused.isError == true)
+                #expect(refused.envelope.error?.code == "focus_required")
+
+                _ = try await client.callTool("sim_stop", as: SimStopResult.self)
+                #expect(await client.stop())
+            } catch {
+                _ = try? await client.callTool("sim_stop", as: SimStopResult.self)
+                _ = await client.stop()
+                throw error
+            }
+        }
+    }
+
+    private func repositoryRoot() -> URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent() // file
+            .deletingLastPathComponent() // Integration
+            .deletingLastPathComponent() // SimulatorMCPCoreTests
+            .deletingLastPathComponent() // Tests
+    }
+
+    private func activateFinder() async throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        process.arguments = ["-e", "tell application \"Finder\" to activate"]
+        process.standardOutput = Pipe()
+        process.standardError = Pipe()
+        try process.run()
+        process.waitUntilExit()
+        try await Task.sleep(for: .seconds(1))
+    }
+}
+
+/// Reads the fixture's own stdout markers through the published get_logs tool,
+/// advancing the cursor so a marker is never double-counted.
+private actor FixtureMarkerReader {
+    private let client: InstalledServerClient
+    private let sessionId: Int
+    private var cursor: String?
+
+    init(client: InstalledServerClient, sessionId: Int) {
+        self.client = client
+        self.sessionId = sessionId
+    }
+
+    func wait(for marker: String, timeout: Duration) async throws -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        while clock.now < deadline {
+            var arguments: [String: JSONValue] = [
+                "sessionId": .int(sessionId), "limit": 500,
+            ]
+            if let cursor { arguments["sinceToken"] = .string(cursor) }
+            let logs = try requireSuccess(
+                try await client.callTool("get_logs", arguments: arguments, as: GetLogsResult.self),
+                tool: "get_logs")
+            cursor = logs.nextToken
+            if logs.lines.contains(where: { $0.text.contains(marker) }) { return true }
+            try await Task.sleep(for: .milliseconds(400))
+        }
+        return false
     }
 }
 

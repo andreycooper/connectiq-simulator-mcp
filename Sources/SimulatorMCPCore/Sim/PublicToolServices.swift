@@ -4,7 +4,39 @@ import Foundation
 /// compilation, lifecycle policy, run orchestration, and session reads stay in
 /// the service layer; handlers only decode one request and call one closure.
 extension ToolHandlerServices {
-    public static func live() -> ToolHandlerServices {
+    /// The published surface. Profile loading is throwing so an invalid or
+    /// missing adjacent input profile aborts startup rather than silently
+    /// publishing a server whose advertised button capability is unbacked.
+    public static func live() throws -> ToolHandlerServices {
+        try qualificationCandidate()
+    }
+
+    /// Composition without any input transport, for callers that must not
+    /// touch button automation.
+    public static func withoutInput() -> ToolHandlerServices {
+        liveComposition().services
+    }
+
+    /// Builds the private qualification services around the same controller
+    /// used by sim_start/run_app/run_tests in this composition. Construction
+    /// is throwing and never falls back to the immutable v1 service surface.
+    public static func qualificationCandidate() throws -> ToolHandlerServices {
+        let profile = try InputProfileLoader.loadQualificationCandidate()
+        let composition = liveComposition(capabilities: try InputCapabilityRegistry(profile))
+        let transport = try FocusedKeyTransport(
+            profile: profile, dependencies: .live, clock: ContinuousClock(),
+            diagnosticSink: { Log.err("focused_key_diagnostic \($0)") })
+        let buttonService = ButtonInputService(
+            profile: profile.profile, transport: transport,
+            operationRunner: ButtonOperationRunner(controller: composition.controller))
+        return try composition.services.qualification(profile: profile) {
+            try await buttonService.press($0)
+        }
+    }
+
+    private static func liveComposition(
+        capabilities: InputCapabilityRegistry? = nil
+    ) -> LiveToolServiceComposition {
         let locator = SdkLocator()
         let catalog = DeviceCatalog()
         let processRunner = Subprocess()
@@ -29,12 +61,12 @@ extension ToolHandlerServices {
         let screenshot = ScreenshotService(controller: controller, deviceCatalog: catalog)
         let gpsPosition = GpsPositionService(controller: controller)
 
-        return ToolHandlerServices(
+        let services = ToolHandlerServices(
             listSdks: {
                 ListSdksResult(installed: locator.installedSdks(), active: try locator.resolve())
             },
             listDevices: { request in
-                _ = try locator.resolve(explicitPath: request.sdk)
+                let sdk = try locator.resolve(explicitPath: request.sdk)
                 if request.projectPath == nil, request.jungle != nil {
                     throw ToolError(
                         code: "invalid_arguments",
@@ -47,10 +79,18 @@ extension ToolHandlerServices {
                 let devices = descriptor.map {
                     catalog.installedDevices(intersecting: $0.manifestDevices)
                 } ?? catalog.installedDevices()
-                return ListDevicesResult(devices: devices.map {
-                    DeviceSummary(
-                        deviceId: $0.deviceId, displayName: $0.displayName, touch: $0.touch,
-                        buttons: [], inputSupported: false, inputProfile: nil)
+                return ListDevicesResult(devices: devices.map { device in
+                    // Capability comes from the verified profile allowlist for
+                    // this exact device and SDK. A device-name or simulator
+                    // JSON heuristic is never treated as transport evidence.
+                    let capability = capabilities?.capability(
+                        device: device.deviceId, sdkVersion: sdk.version.description)
+                    return DeviceSummary(
+                        deviceId: device.deviceId, displayName: device.displayName,
+                        touch: device.touch,
+                        buttons: capability?.buttons ?? [],
+                        inputSupported: capability != nil,
+                        inputProfile: capability?.profile)
                 })
             },
             build: { request in
@@ -65,7 +105,8 @@ extension ToolHandlerServices {
             simStart: { request in
                 let sdk = try locator.resolve(explicitPath: request.sdk)
                 _ = try await controller.withOperation(
-                    .simStart, requirement: .start(requested: sdk)) { _ in () }
+                    .simStart,
+                    requirement: .start(requested: sdk)) { _ in () }
                 return SimStartResult(status: try await controller.status())
             },
             simStop: {
@@ -103,7 +144,13 @@ extension ToolHandlerServices {
             setGpsPosition: { request in
                 try await gpsPosition.setPosition(request)
             })
+        return LiveToolServiceComposition(services: services, controller: controller)
     }
+}
+
+private struct LiveToolServiceComposition: Sendable {
+    let services: ToolHandlerServices
+    let controller: SimulatorController
 }
 
 private func liveSdkProbe(locator: SdkLocator) -> DoctorProbeStatus {

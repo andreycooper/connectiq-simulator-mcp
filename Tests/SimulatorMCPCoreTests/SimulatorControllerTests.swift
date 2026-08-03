@@ -1155,7 +1155,10 @@ private struct SignalCall: Equatable, Sendable {
 private actor FakeSimulatorSystem {
     private var processes: [SimulatorProcessIdentity] = []
     private var launchResult: SimulatorProcessIdentity?
+    private var currentFrontmost: Int32? = 7
     private(set) var launchedApps: [URL] = []
+    private(set) var activatedLaunchedApps: [URL] = []
+    private(set) var frontmostObservations: [Int32?] = []
     private(set) var signals: [SignalCall] = []
     private var exitOnSignal: Int32 = 15
     private var lookupCount = 0
@@ -1168,7 +1171,9 @@ private actor FakeSimulatorSystem {
             sdk: sdk)
     }
 
-    func setProcesses(_ value: [SimulatorProcessIdentity]) { processes = value }
+    func setProcesses(_ value: [SimulatorProcessIdentity]) {
+        processes = value
+    }
     func setExitOnSignal(_ value: Int32) { exitOnSignal = value }
     func setLookupHook(_ hook: @escaping @Sendable (Int) async -> Void) {
         lookupHook = hook
@@ -1177,6 +1182,8 @@ private actor FakeSimulatorSystem {
     func setLaunchIdentity(sdk: SdkInfo, pid: Int32) {
         launchResult = identity(pid: pid, sdk: sdk)
     }
+
+    func setFrontmost(_ value: Int32?) { currentFrontmost = value }
 
     func discover() -> [SimulatorProcessIdentity] { processes }
 

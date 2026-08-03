@@ -1,0 +1,106 @@
+{
+  "schemaVersion": 1,
+  "capturedOn": "2026-07-19",
+  "device": "fenix6xpro",
+  "declaredKeyboardLayout": "ANSI-US",
+  "mapping": {
+    "enter": 36,
+    "esc": 53,
+    "up": 126,
+    "down": 125,
+    "menu": 46
+  },
+  "chain": [
+    {
+      "logicalButton": "enter",
+      "simulatorKey": "Enter",
+      "virtualKeyConstant": "kVK_Return",
+      "decimalKeycode": 36
+    },
+    {
+      "logicalButton": "esc",
+      "simulatorKey": "Esc",
+      "virtualKeyConstant": "kVK_Escape",
+      "decimalKeycode": 53
+    },
+    {
+      "logicalButton": "up",
+      "simulatorKey": "Up",
+      "virtualKeyConstant": "kVK_UpArrow",
+      "decimalKeycode": 126
+    },
+    {
+      "logicalButton": "down",
+      "simulatorKey": "Down",
+      "virtualKeyConstant": "kVK_DownArrow",
+      "decimalKeycode": 125
+    },
+    {
+      "logicalButton": "menu",
+      "simulatorKey": "M",
+      "virtualKeyConstant": "kVK_ANSI_M",
+      "decimalKeycode": 46
+    }
+  ],
+  "sources": [
+    {
+      "id": "garmin-community-keyboard-shortcuts",
+      "kind": "Garmin community evidence",
+      "url": "https://forums.garmin.com/developer/connect-iq/f/discussion/338303/keyboard-shortcuts-in-the-simulator",
+      "retrievedOn": "2026-07-19",
+      "sha256": "d6ed40565ca4e7d116cac01bac256ff27af64385a4eff30cb7c7806b38f6c7ab",
+      "digestBasis": "SHA-256 of the raw HTTP response captured on the retrieval date; the community page is dynamically rendered and may produce a different response digest on a later fetch.",
+      "quotes": [
+        "Enter maps to START / STOP",
+        "Esc maps to BACK",
+        "Up / Down arrorw map to Up / Down buttons",
+        "M is for Menu.",
+        "For 935, pressing M in the sim is equivalent to clicking (and holding) on the UP button in the sim.",
+        "So it seems that M for KEY_MENU works as long as there is a physical button where a short press or long press opens the menu.",
+        "And it specifically doesn't work for touchscreen devices where long-pressing the screen opens the menu."
+      ],
+      "caveat": "This is community evidence rather than a Garmin compatibility guarantee; the physical-button Menu example names 935 and Vivoactive HR rather than fenix6xpro. The release gate therefore treats the table as a bounded candidate and requires exact fenix6xpro fixture markers before activation."
+    },
+    {
+      "id": "apple-hitoolbox-release-notes",
+      "kind": "Apple HIToolbox release notes",
+      "url": "https://developer.apple.com/library/archive/releasenotes/Carbon/HIToolbox.html",
+      "retrievedOn": "2026-07-19",
+      "sha256": "a47905d4f43b6ecf5f7f24465777870849e578c19d4d9d738f4a84fff08d32c1",
+      "quotes": [
+        "In Events.h, a new set of constants is available that defines the standard virtual keycode values for an ANSI-standard US keyboard layout, as well as keyboard layout-independent keys and some JIS and ISO keys."
+      ],
+      "role": "Official Apple provenance for the virtual-keycode definitions and ANSI-US layout contract."
+    },
+    {
+      "id": "preserved-hitoolbox-events-header",
+      "kind": "Preserved MacOS SDK Events.h",
+      "url": "https://github.com/phracker/MacOSX-SDKs/blob/master/MacOSX10.6.sdk/System/Library/Frameworks/Carbon.framework/Versions/A/Frameworks/HIToolbox.framework/Versions/A/Headers/Events.h",
+      "rawUrl": "https://raw.githubusercontent.com/phracker/MacOSX-SDKs/refs/heads/master/MacOSX10.6.sdk/System/Library/Frameworks/Carbon.framework/Versions/A/Frameworks/HIToolbox.framework/Versions/A/Headers/Events.h",
+      "retrievedOn": "2026-07-19",
+      "sha256": "f0c475dbc4500f6f4d867fb224d29b18596a9d8880fabf1ba4fd9cfc84eafac0",
+      "quote": "These constants are the virtual keycodes defined originally in Inside Mac Volume V, pg. V-191. They identify physical keys on a keyboard.",
+      "layoutQuote": "Those constants with ‘ANSI’ in the name are labeled according to the key position on an ANSI-standard US keyboard.",
+      "constants": {
+        "kVK_ANSI_M": "0x2E",
+        "kVK_Return": "0x24",
+        "kVK_Escape": "0x35",
+        "kVK_DownArrow": "0x7D",
+        "kVK_UpArrow": "0x7E"
+      },
+      "role": "Preserved exact numeric declarations for the Apple-documented virtual-key constants; the source is a public mirror of the SDK header, not a separate mapping inference."
+    }
+  ],
+  "evidenceBoundary": {
+    "fixtureMarkerProof": "required in the installed two-SDK focused gate",
+    "keyboardLayoutPreflight": "enabled && currentID == com.apple.keylayout.US",
+    "prohibitedInference": [
+      "keycode iteration",
+      "fuzzing",
+      "binary-string inference",
+      "simulator.json inference",
+      "semantic AX inference",
+      "undocumented fallback"
+    ]
+  }
+}

@@ -1,0 +1,80 @@
+{
+  "schemaVersion": 1,
+  "capturedOn": "2026-08-03",
+  "device": "fenix6xpro",
+  "macOSVersion": "26.5.2",
+  "sdks": ["8.4.1", "9.1.0"],
+  "summary": "Empirical delivery contract for the focused-keys transport. Every value below was measured against the deterministic testapp fixture; delivery is counted only when the app's own FIXTURE_KEY marker is observed through get_logs.",
+  "facts": {
+    "keyDownDwell": {
+      "finding": "A key-down/key-up pair posted with no dwell is never delivered. The simulator's event loop samples key state, so the pair must straddle at least one sample.",
+      "measurements": [
+        {"holdMs": 0, "delivered": "0/5"},
+        {"holdMs": 10, "delivered": "5/5"},
+        {"holdMs": 20, "delivered": "5/5"},
+        {"holdMs": 40, "delivered": "5/5"},
+        {"holdMs": 60, "delivered": "5/5"},
+        {"holdMs": 80, "delivered": "5/5"},
+        {"holdMs": 120, "delivered": "5/5"},
+        {"holdMs": 200, "delivered": "5/5"}
+      ],
+      "adopted": {"minimumPressMs": 50},
+      "note": "This is the defect that failed Task 15's original CGEvent gate: the transport posted key-up 7.4 microseconds after key-down."
+    },
+    "firstKeyAfterAppLaunch": {
+      "finding": "The simulator consumes exactly the first key event delivered after an app launches. Reproduced 10/10 on fresh app launches.",
+      "independentOf": [
+        "elapsed time since the app started (still dropped after 12s)",
+        "whether the press followed an activation transition",
+        "AXRaise, AXFocused, or AXMain on the simulator window",
+        "which button is sent"
+      ],
+      "adopted": {
+        "warmUpKeyCode": 56,
+        "rationale": "kVK_Shift. A modifier reaches the window server like any key and absorbs the consumed event, but Connect IQ can never decode it as a device button, so it is safe to send before every press without tracking which app launch was already warmed.",
+        "measurement": "warm-up emitted no fixture marker; the following press delivered on both SDKs"
+      }
+    },
+    "activeApplicationObservation": {
+      "finding": "NSWorkspace.frontmostApplication and NSWorkspace.runningApplications are refreshed from main-run-loop notifications. An async MCP stdio server never pumps one, so both freeze at whatever was active when the process started.",
+      "evidence": "A live gate recorded 154 consecutive identical polls naming the launching terminal while a freshly spawned process confirmed the Simulator was frontmost the whole time. This produced the 2026-08-02 simulator_focus_failed blocker; the activation itself had succeeded.",
+      "alternativesMeasured": {
+        "NSWorkspace.frontmostApplication": "stale for the process lifetime",
+        "NSWorkspace.runningApplications.first(isActive)": "stale for the process lifetime",
+        "AXUIElementCreateSystemWide + kAXFocusedApplication": "unreliable; reported an unresolvable pid",
+        "CGWindowListCopyWindowInfo front normal-layer owner": "live, but reports the front window owner, which is wrong when the active application has no windows",
+        "NSRunningApplication(processIdentifier:).isActive": "live and correct when the instance is constructed fresh on every call"
+      },
+      "adopted": "NSRunningApplication(processIdentifier:).isActive, constructed per call, is the authorization for posting. Keys posted to the session tap are delivered to the active application, so this is the exact precondition."
+    },
+    "activation": {
+      "adopted": "AXUIElementSetAttributeValue(kAXFrontmostAttribute) on the retained simulator pid",
+      "measurements": {"latencyMs": "36-146", "axError": 0},
+      "note": "NSWorkspace.openApplication also activates (52-253ms measured) but re-opens the bundle through Launch Services. Both were measured; the accessibility attribute is used because it activates in place and needs only the Accessibility grant this server already holds."
+    },
+    "buttons": {
+      "verified": {"enter": 36, "esc": 53, "up": 126, "down": 125},
+      "rejected": {
+        "menu": {
+          "keyCode": 46,
+          "finding": "Never delivered on fenix6xpro at any dwell (0/8 across both SDKs at 50ms, 400ms and 1200ms).",
+          "reason": "fenix 6X has no menu key. Menu is a long press of up; callers use press_button with button=up and holdMs>=1000.",
+          "removedFrom": "the profile button order and both SDK entries"
+        },
+        "keypadEnter": {"keyCode": 76, "finding": "no device button; produced no marker"}
+      }
+    },
+    "backgroundDelivery": {
+      "finding": "CGEvent.postToPid delivers nothing to the simulator even with a correct dwell (0/4 buttons, app backgrounded).",
+      "note": "Re-verified deliberately, because Task 15 rejected this route while the zero-dwell defect was present. The rejection stands for the correct reason."
+    }
+  },
+  "acceptance": {
+    "surface": "installed signed server at ~/.simulator-mcp/bin/simulator-mcp driven over real MCP stdio",
+    "sequence": "initialize -> tools/list -> list_devices -> sim_start -> run_app -> press_button -> get_logs",
+    "cases": ["enter", "esc", "up", "down", "up holdMs=1000", "enter after backgrounding to a windowless app"],
+    "result": "2 runs per SDK, 6/6 delivered in each; 24/24 presses total",
+    "negative": "allowFocus=false while backgrounded returns focus_required and posts no event",
+    "markerAuthority": "app-owned FIXTURE_KEY/FIXTURE_PAGE/FIXTURE_SELECTED/FIXTURE_BACK lines read through get_logs; a successful tool result is never treated as delivery evidence"
+  }
+}

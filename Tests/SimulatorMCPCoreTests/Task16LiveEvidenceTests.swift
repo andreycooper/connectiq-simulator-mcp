@@ -21,7 +21,7 @@ struct Task16LiveEvidenceTests {
         let project = root.appending(
             path: "Tests/fixtures/testapp", directoryHint: .isDirectory)
         let fixtureBin = project.appending(path: "bin", directoryHint: .isDirectory)
-        let services = ToolHandlerServices.live()
+        let services = try ToolHandlerServices.live()
 
         do {
             try await withMCPHarness(handlers: ToolHandlers.configured(services)) { harness in

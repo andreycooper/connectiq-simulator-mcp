@@ -16,7 +16,8 @@ let package = Package(
     targets: [
         .target(
             name: "SimulatorMCPCore",
-            dependencies: [.product(name: "MCP", package: "swift-sdk")]
+            dependencies: [.product(name: "MCP", package: "swift-sdk")],
+            resources: [.copy("Resources")]
         ),
         .executableTarget(
             name: "SimulatorMCP",

@@ -55,7 +55,8 @@ struct PublicToolHandlerTests {
                 ],
                 "screenshot": ["savePath": .string],
                 "set_gps_position": ["lat": .number, "lon": .number],
-                "sim_start": ["sdk": .string], "sim_status": [:], "sim_stop": [:],
+                "sim_start": ["sdk": .string],
+                "sim_status": [:], "sim_stop": [:],
             ]
             for tool in tools {
                 #expect(fieldSchemas(of: tool) == expected[tool.name])
@@ -106,6 +107,29 @@ struct PublicToolHandlerTests {
                 #expect(response.envelope.error?.fix.isEmpty == false)
             }
             #expect(await recorder.calls.isEmpty)
+        }
+    }
+
+    @Test("sim_start takes only an optional sdk and rejects the withdrawn activate field")
+    func simStartArguments() async throws {
+        let recorder = ServiceRecorder()
+        try await withMCPHarness(handlers: ToolHandlers.configured(recorder.services)) { harness in
+            _ = try await harness.call("sim_start", as: SimStartResult.self)
+
+            // The activated-start route failed its gate and was withdrawn.
+            // press_button performs its own activation, so sim_start must not
+            // advertise or accept it.
+            let activate = try await harness.call(
+                "sim_start", arguments: ["activate": true], as: JSONValue.self)
+            #expect(activate.raw.isError == true)
+            #expect(activate.envelope.error?.code == "invalid_arguments")
+
+            let unknown = try await harness.call(
+                "sim_start", arguments: ["unexpected": true], as: JSONValue.self)
+            #expect(unknown.raw.isError == true)
+            #expect(unknown.envelope.error?.code == "invalid_arguments")
+
+            #expect(await recorder.simStartRequests == [.init(sdk: nil)])
         }
     }
 
@@ -276,6 +300,7 @@ private actor ServiceRecorder {
     private(set) var calls: [String] = []
     private(set) var listDeviceRequests: [ListDevicesToolRequest] = []
     private(set) var buildRequests: [BuildToolRequest] = []
+    private(set) var simStartRequests: [SimStartToolRequest] = []
     private(set) var runAppRequests: [RunAppToolRequest] = []
     private(set) var runTestsRequests: [RunTestsToolRequest] = []
     private(set) var logRequests: [GetLogsToolRequest] = []
@@ -294,7 +319,10 @@ private actor ServiceRecorder {
                 await self.append(request)
                 return try await self.record("build", value: Samples.build)
             },
-            simStart: { _ in try await self.record("sim_start", value: SimStartResult(status: Samples.status)) },
+            simStart: { request in
+                await self.append(request)
+                return try await self.record("sim_start", value: SimStartResult(status: Samples.status))
+            },
             simStop: { try await self.record("sim_stop", value: SimStopResult(status: Samples.stopped)) },
             simStatus: { try await self.record("sim_status", value: Samples.status) },
             runApp: { request in
@@ -318,6 +346,7 @@ private actor ServiceRecorder {
 
     private func append(_ request: ListDevicesToolRequest) { listDeviceRequests.append(request) }
     private func append(_ request: BuildToolRequest) { buildRequests.append(request) }
+    private func append(_ request: SimStartToolRequest) { simStartRequests.append(request) }
     private func append(_ request: RunAppToolRequest) { runAppRequests.append(request) }
     private func append(_ request: RunTestsToolRequest) { runTestsRequests.append(request) }
     private func append(_ request: GetLogsToolRequest) { logRequests.append(request) }

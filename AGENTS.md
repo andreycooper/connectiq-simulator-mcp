@@ -8,9 +8,8 @@ file — keep everything here.
 
 `simulator-mcp` — a Swift MCP stdio server that drives the Garmin Connect IQ
 simulator on macOS so agent CLIs can build, run, and unit-test Connect IQ
-watch apps, read their logs, take screenshots, and set GPS position.
-Watch-button automation is deferred from v1: both investigated
-background-input routes failed their evidence gates (see the evidence index).
+watch apps, read their logs, take screenshots, set GPS position, and press
+watch buttons.
 
 ## Authoritative contracts
 
@@ -45,11 +44,20 @@ heuristic, guess another constant, or skip a gate.
   assertions), never by fixed delays. Use `ContinuousClock` for all timing.
 - **monkeydo's exit code is unreliable** (SDK regex bug). Test transcripts
   are authoritative — parse them, never trust the code.
-- **Input capability:** v1 has no verified button profile and does not
-  register `press_button`; every device advertises `inputSupported=false`,
-  `buttons=[]`, and `inputProfile=null`. The Task 15 CGEvent and semantic AX
-  gates failed closed. Device JSON describes hardware; it is never proof of
-  an automation transport. Future input requires a separate v2 design.
+- **Input capability:** `press_button` is verified for `fenix6xpro`
+  (`enter`, `esc`, `up`, `down`) on SDK 8.4.1 and 9.1.0. Capability is an
+  explicit allowlist keyed by exact device id and SDK version; every other
+  device advertises `inputSupported=false`, `buttons=[]`, and
+  `inputProfile=null`. Device JSON describes hardware; it is never proof of
+  an automation transport. Three delivery facts are load-bearing and measured
+  in `fenix6xpro-focused-delivery.json` — do not "simplify" any of them away:
+  a press must hold the key down for the profile's `minimumPressMs`, because a
+  key pair posted with no dwell is never delivered; an inert `kVK_Shift`
+  warm-up absorbs the first key event after an app launch, which the simulator
+  always consumes; and posting is authorized by a freshly constructed
+  `NSRunningApplication(processIdentifier:).isActive`, because every cached
+  workspace property freezes in a process that never pumps a main run loop.
+  There is no `menu` button on this device: menu is `up` with `holdMs >= 1000`.
 - **Secrets:** `SIM_DEVELOPER_KEY` points to a Connect IQ developer key
   stored **outside** this repository. No key material is ever committed.
 
@@ -89,9 +97,14 @@ both TCC grants (Screen Recording, Accessibility).
 - Runtime probes: `sdk-8.4.1-runtime.json`, `sdk-9.1.0-runtime.json`.
 - Launcher contracts: `monkeydo-process-8.4.1.json`,
   `monkeydo-process-9.1.0.json`, `monkeydo-launch.json`.
-- The Task 15 deferred button decision: `fenix6xpro-ax-input-8.4.1.json` and
-  `fenix6xpro-ax-input-9.1.0.json`. Both sanitized trees have no exact
-  semantic physical-button control; v1 has no input transport.
+- The button delivery contract: `fenix6xpro-focused-delivery.json` (dwell
+  floor, first-key warm-up, active-application observation, activation route,
+  rejected buttons, and the installed-server acceptance result), with the
+  verified mapping in `fenix6xpro-input.json`.
+- The earlier accessibility probe: `fenix6xpro-ax-input-8.4.1.json` and
+  `fenix6xpro-ax-input-9.1.0.json`. Neither sanitized tree exposes a semantic
+  physical-button control, which is why delivery uses focused key events
+  rather than an accessibility action.
 - The Task 16 GPS contract: `gps-ax.json` with static `Position.getInfo()`
   polling observation.
 - The Task 17 TCC attribution: `tcc-attribution.json` records the verified

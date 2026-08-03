@@ -159,7 +159,7 @@ JSON as the first text content item. Success is `{ok:true,result:...}` with
 |---|---|---|
 | `doctor` | `requestPermissions?` (default `false`) | SDK, Java, simulator, stable signature, responsible-process note, Screen Recording and Accessibility preflights. Permission prompts occur only when explicitly requested. |
 | `list_sdks` | none | Installed SDK paths/versions and the active resolution source. Missing SDK state is actionable. |
-| `list_devices` | `projectPath?`, `jungle?`, `sdk?` | Installed/manifest-filtered devices. v1 always reports `inputSupported=false`, `buttons=[]`, and `inputProfile=null`. |
+| `list_devices` | `projectPath?`, `jungle?`, `sdk?` | Installed/manifest-filtered devices. Input capability comes from the verified profile allowlist; devices outside it report `inputSupported=false`, `buttons=[]`, and `inputProfile=null`. |
 | `build` | `projectPath`; optional `device`, `sdk`, `jungle`, `developerKey`, `release`, `unitTests` | Artifact identity plus structured diagnostics. Ordinary compiler errors return `succeeded=false`; incompatible build flags are rejected. |
 | `sim_start` | `sdk?` | Verified ready status for the exact SDK. A running different SDK returns `sdk_mismatch`. |
 | `sim_stop` | none | Confirmed `not_running` status after session and simulator cleanup. |
@@ -169,9 +169,30 @@ JSON as the first text content item. Success is `{ok:true,result:...}` with
 | `get_logs` | optional `sessionId`, `sinceToken`, `limit` | Bounded lines, crash state, termination data, dropped count, and next cursor. |
 | `screenshot` | `savePath?` | PNG image content plus dimensions, simulator PID, saved path, and `appDisplayRect`. Permission denial names the exact onboarding fix. |
 | `set_gps_position` | `lat`, `lon` | Checked coordinates and simulator PID after semantic Accessibility automation and dialog-close proof. |
+| `press_button` | `button`; optional `holdMs` (50–5000), `allowFocus` (default `false`) | Delivers a verified hardware button to the focused simulator and reports the button, press type, transport, and simulator PID. |
 
-Button automation is intentionally not registered in v1 because both approved
-background-input evidence gates failed closed.
+### Button automation
+
+`press_button` is verified for `fenix6xpro` on SDK 8.4.1 and 9.1.0 with the
+buttons `enter`, `esc`, `up`, and `down`. Capability is an explicit allowlist:
+no other device advertises input, because a device-name or simulator-JSON
+match is not evidence that a transport works.
+
+The transport posts a key-down/key-up pair to the frontmost simulator. It
+requires the ANSI-US input source (`com.apple.keylayout.US`) and the
+Accessibility grant. Because the simulator only observes a key that is held
+long enough for its event loop to sample it, every press holds the key for at
+least the profile's `minimumPressMs` (50 ms); `holdMs` above that is passed
+through, and a hold of 300 ms or more reads as a long press on the device.
+
+`allowFocus=true` is required unless the simulator is already frontmost: the
+call visibly brings the simulator forward and leaves it frontmost. With
+`allowFocus=false` and the simulator in the background, the call returns
+`focus_required` and posts no event.
+
+There is no `menu` button for `fenix6xpro`. The device has no menu key; on
+real hardware and in the simulator, menu is a long press of `up`
+(`press_button` with `button: "up"` and `holdMs: 1000`).
 
 ## Build and test
 

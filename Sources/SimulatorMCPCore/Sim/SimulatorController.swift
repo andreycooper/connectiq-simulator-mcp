@@ -1,6 +1,7 @@
 import AppKit
 import Darwin
 import Foundation
+import os
 
 public enum SimOperation: String, Codable, Sendable {
     case simStart = "sim_start"
@@ -56,12 +57,25 @@ struct SimulatorProcessSystem: Sendable {
     let launch: @Sendable (URL) async throws -> Int32
     let signal: @Sendable (Int32, Int32) async throws -> Void
 
+    init(
+        discover: @escaping @Sendable () async throws -> [SimulatorProcessIdentity],
+        lookup: @escaping @Sendable (Int32) async throws -> SimulatorProcessIdentity?,
+        launch: @escaping @Sendable (URL) async throws -> Int32,
+        signal: @escaping @Sendable (Int32, Int32) async throws -> Void,
+    ) {
+        self.discover = discover
+        self.lookup = lookup
+        self.launch = launch
+        self.signal = signal
+    }
+
     static func live(processRunner: any ProcessRunning) -> SimulatorProcessSystem {
         configured(
             processRunner: processRunner,
             isAlive: { pid in kill(pid, 0) == 0 || errno == EPERM },
             procPath: { pid in procPath(pid: pid) },
-            launch: { app in try await launchExactApplication(app) })
+            launch: { app in try await launchExactApplication(app) },
+)
     }
 
     static func configured(
@@ -191,8 +205,12 @@ struct SimulatorProcessSystem: Sendable {
             }
         }
     }
+
 }
 
+/// Launch Services has no cancellation token for its completion handler. This
+/// gate orders cancellation and callback completion so a late callback cannot
+/// resume a cancelled activated-start request.
 public actor SimulatorController {
     private enum RefreshResult: Sendable {
         case absent
@@ -567,11 +585,11 @@ public actor SimulatorController {
 
     private func startOrAdopt(requested: SdkInfo) async throws -> OperationContext {
         let processes = try await discoveredProcesses()
-        let pid: Int32
+        let selected: SimulatorProcessIdentity
         if let existing = processes.first {
             guard let sdk = existing.sdk else { throw unknownSDK(existing) }
             try requireSDKMatch(running: sdk, requested: requested)
-            pid = existing.pid
+            selected = existing
         } else {
             let launchedPID = try await system.launch(requested.simulatorApp)
             guard let launched = try await system.lookup(launchedPID) else {
@@ -583,17 +601,20 @@ public actor SimulatorController {
             }
             guard let sdk = launched.sdk else { throw unknownSDK(launched) }
             try requireSDKMatch(running: sdk, requested: requested)
-            pid = launchedPID
+            selected = launched
         }
 
+        let pid = selected.pid
         lifecycleState = .starting
         activeOperation = .simStart
         let ready = try await readinessProbe.waitUntilReady(
             pid: pid, requested: requested, timeout: .seconds(30))
+        try Task.checkCancellation()
         currentIdentity = ready.identity
         recordStableProof(ready)
         if runtimeStore.read()?.simulatorPid != pid { currentDevice = nil }
         synchronizePersistedRuntime(identity: ready.identity, sdk: requested)
+        try Task.checkCancellation()
         try publish(identity: ready.identity, sdk: requested)
         activeOperation = nil
         lifecycleState = .ready

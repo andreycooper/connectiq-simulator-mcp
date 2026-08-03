@@ -30,7 +30,9 @@ public struct BuildToolRequest: Equatable, Sendable {
 
 public struct SimStartToolRequest: Equatable, Sendable {
     public let sdk: String?
-    public init(sdk: String?) { self.sdk = sdk }
+    public init(sdk: String?) {
+        self.sdk = sdk
+    }
 }
 
 public struct RunAppToolRequest: Equatable, Sendable {
@@ -105,6 +107,7 @@ public struct ToolHandlerServices: Sendable {
     public let doctor: @Sendable (DoctorToolRequest) async throws -> DoctorResult
     public let screenshot: @Sendable (ScreenshotToolRequest) async throws -> ScreenshotOutput
     public let setGpsPosition: @Sendable (SetGpsPositionToolRequest) async throws -> SetGpsPositionResult
+    public let pressButton: @Sendable (PressButtonToolRequest) async throws -> PressButtonResult
 
     public init(
         listSdks: @escaping @Sendable () async throws -> ListSdksResult,
@@ -128,6 +131,12 @@ public struct ToolHandlerServices: Sendable {
                 code: "environment_missing",
                 message: "GPS automation service is not configured.",
                 fix: "Use the live server composition, then retry set_gps_position.")
+        },
+        pressButton: @escaping @Sendable (PressButtonToolRequest) async throws -> PressButtonResult = {
+            _ in throw ToolError(
+                code: "input_unsupported",
+                message: "Button qualification service is not configured.",
+                fix: "Use the qualification candidate composition.")
         }
     ) {
         self.listSdks = listSdks; self.listDevices = listDevices; self.build = build
@@ -136,14 +145,56 @@ public struct ToolHandlerServices: Sendable {
         self.doctor = doctor
         self.screenshot = screenshot
         self.setGpsPosition = setGpsPosition
+        self.pressButton = pressButton
+    }
+
+    /// Returns a copy whose extra service remains private to candidate wiring.
+    public func qualification(
+        profile: QualifiedInputProfile? = nil,
+        pressButton: @escaping @Sendable (PressButtonToolRequest) async throws -> PressButtonResult
+    ) throws -> ToolHandlerServices {
+        let qualified = try profile ?? InputProfileLoader.loadQualificationCandidate()
+        let service = QualificationButtonService(profile: qualified, dispatch: pressButton)
+        return ToolHandlerServices(
+            listSdks: listSdks, listDevices: listDevices, build: build, simStart: simStart,
+            simStop: simStop, simStatus: simStatus, runApp: runApp, runTests: runTests,
+            getLogs: getLogs, doctor: doctor, screenshot: screenshot,
+            setGpsPosition: setGpsPosition, pressButton: { try await service.press($0) })
     }
 }
 
 public enum ToolHandlers {
     /// The complete Task 11 surface. Later tasks append doctor and automation
     /// tools only after their services and evidence gates exist.
-    public static func live() -> [any SimulatorTool] {
-        configured(ToolHandlerServices.live())
+    public static func live() throws -> [any SimulatorTool] {
+        qualificationConfigured(try ToolHandlerServices.live())
+    }
+
+    /// Private candidate composition. Profile loading is throwing so a missing
+    /// or invalid adjacent resource bundle aborts startup rather than silently
+    /// falling back to the immutable v1 surface.
+    public static func qualificationCandidate() throws -> [any SimulatorTool] {
+        qualificationConfigured(try ToolHandlerServices.qualificationCandidate())
+    }
+
+    public static func qualificationConfigured(_ services: ToolHandlerServices) -> [any SimulatorTool] {
+        configured(services) + [
+            tool(name: "press_button", description: "Press a verified simulator hardware button. With allowFocus=true, this visibly brings Garmin Simulator forward and leaves it frontmost.",
+                 input: InputSchemas.pressButton, output: Schemas.pressButtonResult) { arguments in
+                var decoder = try Arguments(arguments, allowed: ["button", "holdMs", "allowFocus"])
+                let request = PressButtonToolRequest(
+                    button: try decoder.requiredString("button"),
+                    holdMs: try decoder.optionalInteger("holdMs"),
+                    allowFocus: try decoder.boolean("allowFocus", default: false))
+                if let hold = request.holdMs, !(50...5000).contains(hold) {
+                    throw ToolError(
+                        code: "invalid_arguments",
+                        message: "holdMs must be between 50 and 5000 milliseconds.",
+                        fix: "Omit holdMs for a press or pass a value from 50 through 5000.")
+                }
+                return try ToolResultFactory.success(try await services.pressButton(request))
+            },
+        ]
     }
 
     public static func configured(_ services: ToolHandlerServices) -> [any SimulatorTool] {
@@ -301,6 +352,14 @@ private struct Arguments {
         return string
     }
 
+    mutating func requiredString(_ key: String) throws -> String {
+        guard let value = try string(key) else {
+            throw ToolError(code: "invalid_arguments", message: "Missing required argument '\(key)'.",
+                            fix: "Pass '\(key)' as declared by this tool's input schema.")
+        }
+        return value
+    }
+
     mutating func path(_ key: String) throws -> String? {
         try string(key).map(canonicalPath)
     }
@@ -321,6 +380,12 @@ private struct Arguments {
 
     mutating func integer(_ key: String, default defaultValue: Int) throws -> Int {
         guard let value = values.removeValue(forKey: key) else { return defaultValue }
+        guard case .int(let integer) = value else { throw typeError(key, "an integer") }
+        return integer
+    }
+
+    mutating func optionalInteger(_ key: String) throws -> Int? {
+        guard let value = values.removeValue(forKey: key) else { return nil }
         guard case .int(let integer) = value else { throw typeError(key, "an integer") }
         return integer
     }
@@ -383,6 +448,11 @@ private enum InputSchemas {
     static let setGpsPosition = object([
         "lat": number, "lon": number,
     ], required: ["lat", "lon"])
+    static let pressButton = object([
+        "button": string,
+        "holdMs": ["type": "integer", "minimum": 50, "maximum": 5000],
+        "allowFocus": boolean(false),
+    ], required: ["button"])
 
     private static let string: Value = ["type": "string", "minLength": 1]
     private static let number: Value = ["type": "number"]

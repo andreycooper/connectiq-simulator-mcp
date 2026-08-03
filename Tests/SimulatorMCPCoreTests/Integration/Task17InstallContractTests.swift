@@ -15,11 +15,38 @@ struct Task17InstallContractTests {
         #expect(makefile.contains("codesign --verify --strict --verbose=2"))
         #expect(makefile.contains(".simulator-mcp"))
         #expect(makefile.contains("INSTALL_BINARY := $(INSTALL_DIR)/simulator-mcp"))
+        #expect(makefile.contains("RELEASE_RESOURCE_BUNDLE := .build/release/simulator-mcp_SimulatorMCPCore.bundle"))
+        #expect(makefile.contains("INSTALL_RESOURCE_BUNDLE := $(INSTALL_DIR)/simulator-mcp_SimulatorMCPCore.bundle"))
+        #expect(makefile.contains("/usr/bin/ditto \"$(RELEASE_RESOURCE_BUNDLE)\" \"$$tmp_bundle\""))
+        #expect(makefile.contains("mv -f \"$$tmp_bundle\" \"$(INSTALL_RESOURCE_BUNDLE)\""))
+        #expect(makefile.contains("trap 'rm -f \"$$tmp\"; rm -rf \"$$tmp_bundle\"'"))
         #expect(makefile.contains("dev.simulator-mcp.host"))
         #expect(makefile.contains("LSBackgroundOnly"))
         #expect(makefile.contains("swift package clean"))
         #expect(!makefile.contains("rm -rf $(HOME)/.simulator-mcp"))
         #expect(!makefile.contains("sim.lock"))
+    }
+
+    @Test("bootstrap publishes one composition with no private selector")
+    func bootstrapComposition() throws {
+        let main = try source("Sources/SimulatorMCP/main.swift")
+        #expect(main.contains("try ToolHandlers.live()"))
+        // press_button is published, so there is no longer an environment
+        // selector that can silently swap the served tool surface.
+        #expect(!main.contains("SIM_BUTTON_QUALIFICATION"))
+        #expect(!main.contains("qualificationCandidate"))
+        #expect(main.contains("version: \"0.2.0\""))
+    }
+
+    @Test("v0.2.0 release metadata is consistent across bootstrap and packaging")
+    func releaseMetadata() throws {
+        let main = try source("Sources/SimulatorMCP/main.swift")
+        let makefile = try source("Makefile")
+
+        #expect(main.contains("version: \"0.2.0\""))
+        #expect(makefile.contains(
+            "/usr/bin/plutil -insert CFBundleShortVersionString -string 0.2.0"))
+        #expect(!main.contains("0.1.2"))
     }
 
     @Test("identity creation uses a persistent code-signing certificate")
@@ -112,17 +139,16 @@ struct Task17InstallContractTests {
         for tool in [
             "doctor", "list_sdks", "list_devices", "build", "sim_start", "sim_stop",
             "sim_status", "run_app", "run_tests", "get_logs", "screenshot",
-            "set_gps_position",
+            "set_gps_position", "press_button",
         ] {
             #expect(readme.contains("`\(tool)`"), "README misses tool \(tool)")
         }
-        #expect(!readme.contains("`press_button`"))
     }
 
     @Test("agent guidance stays authoritative and CLAUDE remains a one-line pointer")
     func agentGuidance() throws {
         let agents = try source("AGENTS.md")
-        #expect(agents.contains("Task 15"))
+        #expect(agents.contains("fenix6xpro-focused-delivery.json"))
         #expect(agents.contains("fenix6xpro-ax-input-8.4.1.json"))
         #expect(agents.contains("fenix6xpro-ax-input-9.1.0.json"))
         #expect(agents.contains("Task 17"))
@@ -130,18 +156,6 @@ struct Task17InstallContractTests {
 
         let claude = try source("CLAUDE.md").trimmingCharacters(in: .whitespacesAndNewlines)
         #expect(claude == "@AGENTS.md")
-    }
-
-    @Test("v0.1.2 release metadata preserves the public v1 contract")
-    func releaseMetadata() throws {
-        let main = try source("Sources/SimulatorMCP/main.swift")
-        let makefile = try source("Makefile")
-
-        #expect(main.contains("version: \"0.1.2\""))
-        #expect(makefile.contains(
-            "/usr/bin/plutil -insert CFBundleShortVersionString -string 0.1.2"))
-        #expect(!main.contains("0.2.0"))
-        #expect(!main.contains("SIM_BUTTON_QUALIFICATION"))
     }
 
     private var root: URL {

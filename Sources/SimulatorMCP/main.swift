@@ -1,13 +1,14 @@
+import Foundation
 import MCP
 import SimulatorMCPCore
 
 @main
 enum SimulatorMCPMain {
     static func main() async throws {
-        let registry = ToolRegistry(handlers: ToolHandlers.live())
+        let registry = ToolRegistry(handlers: try ToolHandlers.live())
         let server = Server(
             name: "simulator-mcp",
-            version: "0.1.2",
+            version: "0.2.0",
             capabilities: .init(tools: .init(listChanged: false))
         )
 

@@ -50,7 +50,9 @@ public final class FakeClock: Clock, @unchecked Sendable {
     private var waiters: [UUID: (deadline: Instant, continuation: CheckedContinuation<Void, Error>)] = [:]
     private var registrationWaiters: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
 
-    public init() {}
+    private let autoAdvance: Bool
+
+    public init(autoAdvance: Bool = false) { self.autoAdvance = autoAdvance }
 
     public var now: Instant {
         withLock { Instant(offset: currentOffset) }
@@ -77,6 +79,24 @@ public final class FakeClock: Clock, @unchecked Sendable {
     }
 
     public func sleep(until deadline: Instant, tolerance: Duration? = nil) async throws {
+        // Auto-advancing clocks jump straight to the deadline. Tests that are
+        // not about a specific delay use this so an unconditional wait (such
+        // as the transport's key-down dwell) stays deterministic and instant
+        // instead of requiring a manual advance from every call site.
+        if autoAdvance {
+            try Task.checkCancellation()
+            let ready: [CheckedContinuation<Void, Error>] = withLock {
+                guard currentOffset < deadline.offset else { return [] }
+                currentOffset = deadline.offset
+                let due = waiters
+                    .filter { $0.value.deadline.offset <= currentOffset }
+                    .sorted { $0.value.deadline.offset < $1.value.deadline.offset }
+                for (id, _) in due { waiters.removeValue(forKey: id) }
+                return due.map(\.value.continuation)
+            }
+            ready.forEach { $0.resume() }
+            return
+        }
         let id = UUID()
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in

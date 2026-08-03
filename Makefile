@@ -1,9 +1,11 @@
 SHELL := /bin/sh
 
 RELEASE_BINARY := .build/release/simulator-mcp
+RELEASE_RESOURCE_BUNDLE := .build/release/simulator-mcp_SimulatorMCPCore.bundle
 INSTALL_ROOT := $(HOME)/.simulator-mcp
 INSTALL_DIR := $(INSTALL_ROOT)/bin
 INSTALL_BINARY := $(INSTALL_DIR)/simulator-mcp
+INSTALL_RESOURCE_BUNDLE := $(INSTALL_DIR)/simulator-mcp_SimulatorMCPCore.bundle
 HOST_APP := $(INSTALL_ROOT)/SimulatorMCPHost.app
 HOST_CONTENTS := $(HOST_APP)/Contents
 HOST_BINARY := $(HOST_CONTENTS)/MacOS/simulator-mcp-host
@@ -31,9 +33,13 @@ install: sign
 	umask 077; \
 	mkdir -p "$(INSTALL_DIR)"; \
 	tmp="$(INSTALL_BINARY).tmp.$$$$"; \
-	trap 'rm -f "$$tmp"' EXIT HUP INT TERM; \
+	tmp_bundle="$(INSTALL_RESOURCE_BUNDLE).tmp.$$$$"; \
+	trap 'rm -f "$$tmp"; rm -rf "$$tmp_bundle"' EXIT HUP INT TERM; \
 	/usr/bin/install -m 755 "$(RELEASE_BINARY)" "$$tmp"; \
+	/usr/bin/ditto "$(RELEASE_RESOURCE_BUNDLE)" "$$tmp_bundle"; \
 	codesign --verify --strict --verbose=2 "$$tmp"; \
+	rm -rf "$(INSTALL_RESOURCE_BUNDLE)"; \
+	mv -f "$$tmp_bundle" "$(INSTALL_RESOURCE_BUNDLE)"; \
 	mv -f "$$tmp" "$(INSTALL_BINARY)"; \
 	trap - EXIT HUP INT TERM; \
 	codesign --verify --strict --verbose=2 "$(INSTALL_BINARY)"; \
@@ -51,7 +57,7 @@ install-host: sign
 	/usr/bin/plutil -insert CFBundleIdentifier -string dev.simulator-mcp.host "$$plist"; \
 	/usr/bin/plutil -insert CFBundleName -string SimulatorMCPHost "$$plist"; \
 	/usr/bin/plutil -insert CFBundlePackageType -string APPL "$$plist"; \
-	/usr/bin/plutil -insert CFBundleShortVersionString -string 0.1.2 "$$plist"; \
+	/usr/bin/plutil -insert CFBundleShortVersionString -string 0.2.0 "$$plist"; \
 	/usr/bin/plutil -insert LSBackgroundOnly -bool true "$$plist"; \
 	mv -f "$$plist" "$(HOST_CONTENTS)/Info.plist"; \
 	trap - EXIT HUP INT TERM; \

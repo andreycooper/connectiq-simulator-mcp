@@ -821,13 +821,37 @@ private func pipeDescriptorSet() -> Set<Int> {
 struct FDSentinel: Sendable {
     let originalFD: Int32
     let sentinelFD: Int32
-    let device: UInt64
-    let inode: UInt64
+    let device: dev_t
+    let inode: ino_t
+
+    /// `st_dev` is signed. This sentinel deliberately stats a descriptor that
+    /// may since have been reused by an unrelated file, so converting its
+    /// device id to an unsigned type traps outright — "Negative value is not
+    /// representable" — instead of reporting a mismatch. Comparing the raw
+    /// values keeps the check total.
+    func matches(device: dev_t, inode: ino_t) -> Bool {
+        self.device == device && self.inode == inode
+    }
 }
 
 private enum DescriptorSentinelError: Error {
     case duplicateFailed(Int32)
     case statFailed(Int32)
+}
+
+@Suite("FDSentinel")
+struct FDSentinelTests {
+    @Test("a reused descriptor with a negative device id compares instead of trapping")
+    func negativeDeviceIsComparable() {
+        // A descriptor can be reused by any file, and st_dev is signed, so a
+        // negative device id must be an ordinary mismatch rather than an
+        // unsigned conversion that aborts the whole test process.
+        let sentinel = FDSentinel(originalFD: 7, sentinelFD: 107, device: -8, inode: 42)
+        #expect(sentinel.matches(device: -8, inode: 42))
+        #expect(!sentinel.matches(device: -9, inode: 42))
+        #expect(!sentinel.matches(device: 16_777_233, inode: 42))
+        #expect(!sentinel.matches(device: -8, inode: 43))
+    }
 }
 
 private func descriptorSentinels(_ fds: [Int32]) throws -> [FDSentinel] {
@@ -846,7 +870,7 @@ private func descriptorSentinels(_ fds: [Int32]) throws -> [FDSentinel] {
         }
         sentinels.append(FDSentinel(
             originalFD: fd, sentinelFD: sentinelFD,
-            device: UInt64(info.st_dev), inode: UInt64(info.st_ino)))
+            device: info.st_dev, inode: info.st_ino))
     }
     return sentinels
 }
@@ -854,7 +878,7 @@ private func descriptorSentinels(_ fds: [Int32]) throws -> [FDSentinel] {
 private func originalMatchesSentinel(_ sentinel: FDSentinel) -> Bool {
     var info = stat()
     guard fstat(sentinel.originalFD, &info) == 0 else { return false }
-    return UInt64(info.st_dev) == sentinel.device && UInt64(info.st_ino) == sentinel.inode
+    return sentinel.matches(device: info.st_dev, inode: info.st_ino)
 }
 
 private func closeSentinels(_ sentinels: [FDSentinel]) {

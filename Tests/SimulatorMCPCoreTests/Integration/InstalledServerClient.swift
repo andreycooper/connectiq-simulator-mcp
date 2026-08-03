@@ -10,11 +10,27 @@ struct InstalledToolResponse<Result: Codable & Sendable>: Sendable {
     let isError: Bool
 }
 
+enum InstalledServerClientEvent: Equatable, Sendable {
+    case requestWritten(id: Int, method: String, tool: String?, monotonicNanos: UInt64)
+    case responseReceived(id: Int, method: String, tool: String?, monotonicNanos: UInt64)
+    case stopStarted(monotonicNanos: UInt64)
+    case stdinClosed(monotonicNanos: UInt64)
+    case serverExited(monotonicNanos: UInt64)
+    case terminateSent(monotonicNanos: UInt64)
+    case stopCompleted(monotonicNanos: UInt64)
+    case emergencyCleanupStarted(monotonicNanos: UInt64)
+    case emergencySIGKILLSent(monotonicNanos: UInt64)
+    case emergencyServerExited(monotonicNanos: UInt64)
+    case emergencyCleanupCompleted(monotonicNanos: UInt64)
+}
+
 enum InstalledServerClientError: Error, CustomStringConvertible {
     case notStarted
     case alreadyStarted
     case executableMissing(String)
     case pipeConfiguration(Int32)
+    case pidPublicationFailed(String)
+    case pidCleanupFailed(String)
     case toolListRequired
     case invalidToolAdvertisement(missing: [String], forbidden: [String])
     case serverClosed(stderr: String)
@@ -32,6 +48,10 @@ enum InstalledServerClientError: Error, CustomStringConvertible {
             return "The installed server executable does not exist at \(path)."
         case .pipeConfiguration(let code):
             return "Could not disable SIGPIPE for installed-server stdin (errno \(code))."
+        case .pidPublicationFailed(let reason):
+            return "Could not publish the installed-server child PID atomically: \(reason)"
+        case .pidCleanupFailed(let reason):
+            return "Could not prove cleanup of the installed-server child PID file: \(reason)"
         case .toolListRequired:
             return "Call tools/list and validate the installed server's advertised tools before calling a tool."
         case .invalidToolAdvertisement(let missing, let forbidden):
@@ -65,12 +85,42 @@ actor InstalledServerClient {
     private var stdinHandle: FileHandle?
     private var stdoutHandle: FileHandle?
     private var stderrHandle: FileHandle?
+    private var processExitBarrier: InstalledServerProcessExitBarrier?
     private var stdoutBuffer = Data()
     private var nextRequestID = 1
     private var didListTools = false
+    private let eventSink: @Sendable (InstalledServerClientEvent) -> Void
+    private let arguments: [String]
+    private let baseEnvironment: [String: String]
+    private let pidFile: URL?
+    private var publishedPID: pid_t?
+    private var pidCleanupUncertain = false
+    private let gracefulStopTimeout: Duration
+    private let terminatedStopTimeout: Duration
+    private let emergencyCleanupTimeout: Duration
+    private var finalDiagnosticSnapshot = ""
 
-    init(executableURL: URL) {
+    init(
+        executableURL: URL,
+        arguments: [String] = [],
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        gracefulStopTimeout: Duration = .seconds(5),
+        terminatedStopTimeout: Duration = .seconds(1),
+        emergencyCleanupTimeout: Duration = .seconds(2),
+        eventSink: @escaping @Sendable (InstalledServerClientEvent) -> Void = { _ in }
+    ) {
         self.executableURL = executableURL.standardizedFileURL
+        self.arguments = arguments
+        baseEnvironment = environment
+        if let path = environment["SIM_BUTTON_QUALIFICATION_CLIENT_PID_FILE"], !path.isEmpty {
+            pidFile = URL(fileURLWithPath: path).standardizedFileURL
+        } else {
+            pidFile = nil
+        }
+        self.gracefulStopTimeout = gracefulStopTimeout
+        self.terminatedStopTimeout = terminatedStopTimeout
+        self.emergencyCleanupTimeout = emergencyCleanupTimeout
+        self.eventSink = eventSink
     }
 
     var isRunning: Bool {
@@ -79,6 +129,10 @@ actor InstalledServerClient {
 
     func start() async throws {
         guard process == nil else { throw InstalledServerClientError.alreadyStarted }
+        guard !pidCleanupUncertain else {
+            throw InstalledServerClientError.pidCleanupFailed(
+                "the previous child PID file cleanup is still uncertain")
+        }
         guard FileManager.default.isExecutableFile(atPath: executableURL.path) else {
             throw InstalledServerClientError.executableMissing(executableURL.path)
         }
@@ -88,18 +142,24 @@ actor InstalledServerClient {
         let output = Pipe()
         let errorPipe = Pipe()
         child.executableURL = executableURL
+        child.arguments = arguments
+        child.environment = Self.environment(
+            preserving: baseEnvironment)
         child.standardInput = input
         child.standardOutput = output
         child.standardError = errorPipe
+        let exitBarrier = InstalledServerProcessExitBarrier()
+        child.terminationHandler = { _ in exitBarrier.complete() }
 
         guard fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1) == 0 else {
             throw InstalledServerClientError.pipeConfiguration(errno)
         }
 
         let diagnosticBuffer = diagnostics
+        diagnosticBuffer.reset()
         errorPipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
-            if !data.isEmpty { diagnosticBuffer.append(data) }
+            if data.isEmpty { diagnosticBuffer.complete() } else { diagnosticBuffer.append(data) }
         }
 
         do {
@@ -113,8 +173,10 @@ actor InstalledServerClient {
         stdinHandle = input.fileHandleForWriting
         stdoutHandle = output.fileHandleForReading
         stderrHandle = errorPipe.fileHandleForReading
+        processExitBarrier = exitBarrier
 
         do {
+            try publishOwnedPID(child.processIdentifier)
             let initializeID = nextID()
             _ = try request(
                 id: initializeID,
@@ -126,7 +188,11 @@ actor InstalledServerClient {
                 ])
             try notify(method: "notifications/initialized", params: [:])
         } catch {
-            await stop()
+            let cleanupProven = await stop()
+            if !cleanupProven {
+                throw InstalledServerClientError.pidCleanupFailed(
+                    "the child did not complete bounded cleanup or its published PID file was not owned")
+            }
             throw error
         }
     }
@@ -169,34 +235,128 @@ actor InstalledServerClient {
     }
 
     func diagnosticText() -> String {
-        diagnostics.text()
+        process == nil ? finalDiagnosticSnapshot : diagnostics.text()
     }
 
-    func stop() async {
-        guard let process else { return }
+    @discardableResult
+    func stop() async -> Bool {
+        guard let process else {
+            return resolvePIDCleanupUncertainty()
+        }
+        eventSink(.stopStarted(monotonicNanos: DispatchTime.now().uptimeNanoseconds))
 
         stdinHandle?.closeFile()
-        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
-        while process.isRunning, ContinuousClock.now < deadline {
-            try? await Task.sleep(for: .milliseconds(25))
-        }
-        if process.isRunning {
+        eventSink(.stdinClosed(monotonicNanos: DispatchTime.now().uptimeNanoseconds))
+        var exited = await processExitBarrier?.wait(timeout: gracefulStopTimeout) ?? !process.isRunning
+        if !exited {
             process.terminate()
-            let terminationDeadline = ContinuousClock.now.advanced(by: .seconds(1))
-            while process.isRunning, ContinuousClock.now < terminationDeadline {
-                try? await Task.sleep(for: .milliseconds(25))
-            }
+            eventSink(.terminateSent(monotonicNanos: DispatchTime.now().uptimeNanoseconds))
+            exited = await processExitBarrier?.wait(timeout: terminatedStopTimeout) ?? !process.isRunning
         }
 
+        guard exited else {
+            // Fail closed: retain the pipe, handler, and process ownership rather
+            // than claiming a completed stop without an EOF/drain barrier.
+            finalDiagnosticSnapshot = diagnostics.text()
+            return false
+        }
+        eventSink(.serverExited(monotonicNanos: DispatchTime.now().uptimeNanoseconds))
+        await diagnostics.waitUntilComplete()
+        guard releaseExitedProcess() else { return false }
+        eventSink(.stopCompleted(monotonicNanos: DispatchTime.now().uptimeNanoseconds))
+        return true
+    }
+
+    @discardableResult
+    func emergencyCleanupRetainedChild() async -> Bool {
+        guard let process else {
+            return resolvePIDCleanupUncertainty()
+        }
+        eventSink(.emergencyCleanupStarted(monotonicNanos: DispatchTime.now().uptimeNanoseconds))
+        if process.isRunning {
+            guard kill(process.processIdentifier, SIGKILL) == 0 else { return false }
+            eventSink(.emergencySIGKILLSent(monotonicNanos: DispatchTime.now().uptimeNanoseconds))
+        }
+        let exited = await processExitBarrier?.wait(timeout: emergencyCleanupTimeout) ?? !process.isRunning
+        guard exited else { return false }
+        eventSink(.emergencyServerExited(monotonicNanos: DispatchTime.now().uptimeNanoseconds))
+        await diagnostics.waitUntilComplete()
+        guard releaseExitedProcess() else { return false }
+        eventSink(.emergencyCleanupCompleted(monotonicNanos: DispatchTime.now().uptimeNanoseconds))
+        return true
+    }
+
+    var runningPID: pid_t? { process?.processIdentifier }
+
+    private func publishOwnedPID(_ pid: pid_t) throws {
+        guard let pidFile else { return }
+        let parent = pidFile.deletingLastPathComponent()
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: parent.path, isDirectory: &isDirectory),
+            isDirectory.boolValue
+        else {
+            throw InstalledServerClientError.pidPublicationFailed(
+                "the PID-file parent does not exist: \(parent.path)")
+        }
+
+        do {
+            try Data("\(pid)\n".utf8).write(to: pidFile, options: [.atomic])
+        } catch {
+            throw InstalledServerClientError.pidPublicationFailed(
+                "writing \(pidFile.path) failed: \(error.localizedDescription)")
+        }
+        publishedPID = pid
+    }
+
+    private func removePublishedPIDIfOwned() -> Bool {
+        guard let pidFile, let publishedPID else { return true }
+
+        guard FileManager.default.fileExists(atPath: pidFile.path) else {
+            self.publishedPID = nil
+            pidCleanupUncertain = false
+            return true
+        }
+        do {
+            let contents = try String(contentsOf: pidFile, encoding: .utf8)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard contents == String(publishedPID) else {
+                pidCleanupUncertain = true
+                return false
+            }
+            try FileManager.default.removeItem(at: pidFile)
+            guard !FileManager.default.fileExists(atPath: pidFile.path) else {
+                pidCleanupUncertain = true
+                return false
+            }
+            self.publishedPID = nil
+            pidCleanupUncertain = false
+            return true
+        } catch {
+            pidCleanupUncertain = true
+            return false
+        }
+    }
+
+    private func resolvePIDCleanupUncertainty() -> Bool {
+        guard pidCleanupUncertain else { return true }
+        return removePublishedPIDIfOwned() && !pidCleanupUncertain
+    }
+
+    private func releaseExitedProcess() -> Bool {
+        let pidCleanupProven = removePublishedPIDIfOwned()
+        if !pidCleanupProven { pidCleanupUncertain = true }
+        finalDiagnosticSnapshot = diagnostics.text()
         stderrHandle?.readabilityHandler = nil
         stdoutHandle?.closeFile()
         stderrHandle?.closeFile()
-        self.process = nil
+        process = nil
         stdinHandle = nil
         stdoutHandle = nil
         stderrHandle = nil
+        processExitBarrier = nil
         stdoutBuffer.removeAll(keepingCapacity: false)
         didListTools = false
+        return pidCleanupProven
     }
 
     private func nextID() -> Int {
@@ -209,9 +369,15 @@ actor InstalledServerClient {
     }
 
     private func request(id: Int, method: String, params: [String: Any]) throws -> [String: Any] {
+        let tool = method == "tools/call" ? params["name"] as? String : nil
         try writeJSON([
             "jsonrpc": "2.0", "id": id, "method": method, "params": params,
         ])
+        if tool != "get_logs" {
+            eventSink(.requestWritten(
+                id: id, method: method, tool: tool,
+                monotonicNanos: DispatchTime.now().uptimeNanoseconds))
+        }
 
         while true {
             let response = try readJSONLine()
@@ -219,6 +385,11 @@ actor InstalledServerClient {
             let actualID = (response["id"] as? NSNumber)?.intValue
             guard actualID == id else {
                 throw InstalledServerClientError.mismatchedResponse(expected: id, actual: actualID)
+            }
+            if tool != "get_logs" {
+                eventSink(.responseReceived(
+                    id: id, method: method, tool: tool,
+                    monotonicNanos: DispatchTime.now().uptimeNanoseconds))
             }
             if let error = response["error"] as? [String: Any] {
                 let code = (error["code"] as? NSNumber)?.intValue
@@ -264,22 +435,90 @@ actor InstalledServerClient {
         let data = try JSONEncoder().encode(value)
         return try JSONSerialization.jsonObject(with: data)
     }
+
+    /// The server publishes exactly one tool surface, so the launch
+    /// environment carries no selector that could swap it.
+    nonisolated static func environment(
+        preserving base: [String: String]
+    ) -> [String: String] {
+        var environment = base
+        environment.removeValue(forKey: "SIM_BUTTON_QUALIFICATION")
+        return environment
+    }
+}
+
+private final class InstalledServerProcessExitBarrier: @unchecked Sendable {
+    private struct Waiter {
+        let continuation: CheckedContinuation<Bool, Never>
+        let timer: DispatchSourceTimer
+    }
+
+    private let lock = NSLock()
+    private var completed = false
+    private var waiters: [UUID: Waiter] = [:]
+
+    func complete() {
+        lock.lock()
+        completed = true
+        let snapshot = waiters.values
+        waiters.removeAll(keepingCapacity: false)
+        lock.unlock()
+        snapshot.forEach {
+            $0.timer.cancel()
+            $0.continuation.resume(returning: true)
+        }
+    }
+
+    func wait(timeout: Duration) async -> Bool {
+        await withCheckedContinuation { continuation in
+            let id = UUID()
+            let timer = DispatchSource.makeTimerSource(queue: .global(qos: .userInitiated))
+            timer.setEventHandler { [weak self] in self?.timeOut(id: id) }
+            lock.lock()
+            if completed {
+                lock.unlock()
+                timer.cancel()
+                timer.resume()
+                continuation.resume(returning: true)
+                return
+            }
+            waiters[id] = Waiter(continuation: continuation, timer: timer)
+            lock.unlock()
+            let components = timeout.components
+            let nanoseconds = components.seconds * 1_000_000_000
+                + Int64(components.attoseconds / 1_000_000_000)
+            timer.schedule(deadline: .now() + .nanoseconds(Int(nanoseconds)))
+            timer.resume()
+        }
+    }
+
+    private func timeOut(id: UUID) {
+        lock.lock()
+        let waiter = waiters.removeValue(forKey: id)
+        lock.unlock()
+        waiter?.continuation.resume(returning: false)
+    }
 }
 
 let task17RequiredToolNames: Set<String> = [
     "doctor", "list_sdks", "list_devices", "build", "sim_start", "sim_stop",
     "sim_status", "run_app", "run_tests", "get_logs", "screenshot", "set_gps_position",
+    "press_button",
 ]
 
 func validateTask17ToolAdvertisement(_ toolNames: [String]) throws {
     let advertised = Set(toolNames)
     let missing = task17RequiredToolNames.subtracting(advertised).sorted()
-    let forbidden = advertised.intersection(["press_button"]).sorted()
+    let duplicates = Dictionary(grouping: toolNames, by: { $0 })
+        .filter { $0.value.count > 1 }.map(\.key)
+    let forbidden = (advertised.subtracting(task17RequiredToolNames) + duplicates).sorted()
     guard missing.isEmpty, forbidden.isEmpty else {
         throw InstalledServerClientError.invalidToolAdvertisement(
             missing: missing, forbidden: forbidden)
     }
 }
+
+
 
 /// Safety invariant: every byte mutation and snapshot is protected by `lock`;
 /// no reference to mutable storage escapes. This test-only bridge is required
@@ -289,6 +528,8 @@ private final class InstalledServerDiagnosticBuffer: @unchecked Sendable {
     private let lock = NSLock()
     private let capacity: Int
     private var bytes = Data()
+    private var completed = false
+    private var completionWaiters: [CheckedContinuation<Void, Never>] = []
 
     init(capacity: Int) {
         self.capacity = capacity
@@ -301,6 +542,36 @@ private final class InstalledServerDiagnosticBuffer: @unchecked Sendable {
             bytes.removeFirst(bytes.count - capacity)
         }
         lock.unlock()
+    }
+
+    func reset() {
+        lock.lock()
+        bytes.removeAll(keepingCapacity: false)
+        completed = false
+        completionWaiters.removeAll(keepingCapacity: false)
+        lock.unlock()
+    }
+
+    func complete() {
+        lock.lock()
+        completed = true
+        let waiters = completionWaiters
+        completionWaiters.removeAll(keepingCapacity: false)
+        lock.unlock()
+        waiters.forEach { $0.resume() }
+    }
+
+    func waitUntilComplete() async {
+        await withCheckedContinuation { continuation in
+            lock.lock()
+            if completed {
+                lock.unlock()
+                continuation.resume()
+            } else {
+                completionWaiters.append(continuation)
+                lock.unlock()
+            }
+        }
     }
 
     func text() -> String {
