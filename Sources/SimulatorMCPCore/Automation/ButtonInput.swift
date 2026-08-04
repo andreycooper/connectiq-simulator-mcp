@@ -596,37 +596,82 @@ public struct ButtonInputService: Sendable {
                 throw operationTimeout()
             } catch is CancellationError { throw CancellationError() }
             catch let error as ButtonInputTransportError {
-                throw translate(error)
+                throw translate(
+                    error, button: request.button, simulatorPid: context.simulatorPid)
             }
             catch {
                 Log.err("Button input transport failed: \(String(reflecting: error))")
-                throw deliveryFailure()
+                throw deliveryFailure(details: Self.deliveryDetails(
+                    button: request.button, simulatorPid: context.simulatorPid,
+                    stage: "unclassified"))
             }
             let pressType = (request.holdMs ?? 0) >= profile.core.holdEncoding.fixtureThresholdMs ? "hold" : "press"
             return PressButtonResult(button: request.button, pressType: pressType, transport: transport.kind.rawValue, simulatorPid: context.simulatorPid)
         }
     }
 
-    private func translate(_ error: ButtonInputTransportError) -> ToolError {
+    /// Names the transport stage that gave up, and preserves the description it
+    /// produced. Diagnostic only: it changes no classification and no control
+    /// flow. Added after two gate runs failed with `input_delivery_failed`
+    /// carrying no button, no PID and no stage, which made them undiagnosable
+    /// from the returned error alone.
+    static func transportStage(
+        _ error: ButtonInputTransportError
+    ) -> (stage: String, detail: String) {
+        switch error {
+        case .subprocess(let detail): return ("subprocess", detail)
+        case .keyboardLayoutUnsupported: return ("keyboardLayout", "")
+        case .eventPostingDenied: return ("eventPostingDenied", "")
+        case .accessibilityDenied(let detail): return ("accessibilityDenied", detail)
+        case .accessibility(let detail): return ("accessibility", detail)
+        case .workspaceActivation(let detail): return ("workspaceActivation", detail)
+        case .eventConstruction(let detail): return ("eventConstruction", detail)
+        case .eventPost(let detail): return ("eventPost", detail)
+        }
+    }
+
+    /// Only stable, enumerated values. The transport's own description is a raw
+    /// platform string and stays on stderr: this server translates platform
+    /// errors at its boundary and never interpolates them into a public error.
+    static func deliveryDetails(
+        button: String, simulatorPid: Int32, stage: String
+    ) -> [String: JSONValue] {
+        [
+            "button": .string(button),
+            "simulatorPid": .int(Int(simulatorPid)),
+            "transportStage": .string(stage),
+        ]
+    }
+
+    private func translate(
+        _ error: ButtonInputTransportError, button: String, simulatorPid: Int32
+    ) -> ToolError {
+        let staged = Self.transportStage(error)
+        if !staged.detail.isEmpty {
+            Log.err("Button input \(staged.stage) failed: \(staged.detail)")
+        }
+        let details = Self.deliveryDetails(
+            button: button, simulatorPid: simulatorPid, stage: staged.stage)
         if case .keyboardLayoutUnsupported = error {
             return ToolError(
                 code: "keyboard_layout_unsupported",
                 message: "The current keyboard layout is not supported for button qualification.",
-                fix: "Select the ANSI-US input source (com.apple.keylayout.US), then retry.")
+                fix: "Select the ANSI-US input source (com.apple.keylayout.US), then retry.",
+                details: details)
         }
         if case .eventPostingDenied = error {
             Log.err("Button event posting denied by Accessibility")
-            return accessibilityDenied()
+            return accessibilityDenied(details: details)
         }
         if case .accessibilityDenied = error {
             Log.err("Button input denied by Accessibility")
-            return accessibilityDenied()
+            return accessibilityDenied(details: details)
         }
         if case .workspaceActivation = error {
-            return focusFailure()
+            return focusFailure(details: details)
         }
         Log.err("Button input platform delivery failed: \(String(reflecting: error))")
-        return deliveryFailure()
+        return deliveryFailure(details: details)
     }
 
     private func inputUnsupported(_ message: String, fix: String = "Use a device with a verified input profile.") -> ToolError {
@@ -647,18 +692,27 @@ public struct ButtonInputService: Sendable {
     private func operationTimeout() -> ToolError {
         ToolError(code: "operation_timeout", message: "Button delivery exceeded its deadline.", fix: "Retry after confirming the simulator is ready.")
     }
-    private func accessibilityDenied() -> ToolError {
-        ToolError(code: "accessibility_denied", message: "Accessibility permission denied button delivery.", fix: "Grant Accessibility permission to simulator-mcp, then retry.")
+    private func accessibilityDenied(details: [String: JSONValue]? = nil) -> ToolError {
+        ToolError(
+            code: "accessibility_denied",
+            message: "Accessibility permission denied button delivery.",
+            fix: "Grant Accessibility permission to simulator-mcp, then retry.",
+            details: details)
     }
 
-    private func focusFailure() -> ToolError {
+    private func focusFailure(details: [String: JSONValue]? = nil) -> ToolError {
         ToolError(
             code: "input_delivery_failed",
             message: "The input transport could not deliver the button.",
-            fix: "sim_stop -> sim_start -> run_app -> press_button(allowFocus=true)")
+            fix: "sim_stop -> sim_start -> run_app -> press_button(allowFocus=true)",
+            details: details)
     }
 
-    private func deliveryFailure() -> ToolError {
-        ToolError(code: "input_delivery_failed", message: "The input transport could not deliver the button.", fix: "Restart the simulator, verify the selected input profile and Accessibility state, then retry.")
+    private func deliveryFailure(details: [String: JSONValue]? = nil) -> ToolError {
+        ToolError(
+            code: "input_delivery_failed",
+            message: "The input transport could not deliver the button.",
+            fix: "Restart the simulator, verify the selected input profile and Accessibility state, then retry.",
+            details: details)
     }
 }

@@ -279,10 +279,11 @@ public enum Schemas {
                     required: ["seq", "monotonicNanos", "stream", "text", "crash"]
                 )),
             "nextToken": string,
+            "latestToken": string,
         ],
         required: [
             "sessionId", "state", "terminationReason", "exitCode", "crashDetected",
-            "droppedLines", "lines", "nextToken",
+            "droppedLines", "lines", "nextToken", "latestToken",
         ]
     )
 

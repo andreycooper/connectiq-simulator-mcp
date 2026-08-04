@@ -135,34 +135,48 @@ struct DarwinKernelProcessReader: KernelProcessReading, Sendable {
     }
 
     func arguments(pid: Int32) throws -> [String]? {
-        var mib = [CTL_KERN, KERN_PROCARGS2, pid]
         let maximum = sysconf(_SC_ARG_MAX)
         guard maximum > 0, maximum <= 16 * 1_024 * 1_024 else {
             throw Self.inspectionError(
                 "sysconf(_SC_ARG_MAX) returned unsafe bound \(maximum) for PID \(pid).", pid: pid)
         }
-        var size = Int(maximum)
-        var data = Data(count: size)
-        errno = 0
-        var failure: Int32 = 0
-        let result = data.withUnsafeMutableBytes { raw -> Int32 in
-            let code = sysctl(&mib, u_int(mib.count), raw.baseAddress, &size, nil, 0)
-            // Captured immediately: the confirmation below issues another
-            // syscall, which would otherwise overwrite errno.
-            failure = errno
-            return code
-        }
-        guard result == 0 else {
-            return try Self.resolveArgumentsFailure(errno: failure, pid: pid) {
-                try bsdIdentity(pid: pid) == nil
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: Self.addressSpaceReplacementBudget)
+        while true {
+            var mib = [CTL_KERN, KERN_PROCARGS2, pid]
+            var size = Int(maximum)
+            var data = Data(count: size)
+            errno = 0
+            var failure: Int32 = 0
+            let result = data.withUnsafeMutableBytes { raw -> Int32 in
+                let code = sysctl(&mib, u_int(mib.count), raw.baseAddress, &size, nil, 0)
+                // Captured immediately: the confirmation below issues another
+                // syscall, which would otherwise overwrite errno.
+                failure = errno
+                return code
+            }
+            if result == 0 {
+                guard size > 0, size <= data.count else {
+                    throw Self.inspectionError(
+                        "sysctl(KERN_PROCARGS2) returned invalid length \(size) for PID \(pid).",
+                        pid: pid)
+                }
+                data.count = size
+                return try DarwinProcessIdentityReader.parseProcArguments(data)
+            }
+            switch try Self.resolveArgumentsFailure(
+                errno: failure, pid: pid, deadlineExpired: clock.now >= deadline,
+                confirmGone: { try bsdIdentity(pid: pid) == nil })
+            {
+            case .vanished:
+                return nil
+            case .observeAgain:
+                // Yield rather than spin: exec completes in microseconds, and
+                // the loop exits on an observed state change, never on elapsed
+                // time. The deadline only bounds a process that never recovers.
+                sched_yield()
             }
         }
-        guard size > 0, size <= data.count else {
-            throw Self.inspectionError(
-                "sysctl(KERN_PROCARGS2) returned invalid length \(size) for PID \(pid).", pid: pid)
-        }
-        data.count = size
-        return try DarwinProcessIdentityReader.parseProcArguments(data)
     }
 
     func childPIDs(parentPid: Int32) throws -> [Int32] {
@@ -195,6 +209,11 @@ struct DarwinKernelProcessReader: KernelProcessReading, Sendable {
             .sorted()
     }
 
+    /// Bounds the wait for an exec to complete. Two orders of magnitude above
+    /// the largest window measured (1147 us), so it bounds a pathological
+    /// process without truncating a normal one.
+    static let addressSpaceReplacementBudget: Duration = .milliseconds(250)
+
     private static func indicatesVanishedProcess(_ code: Int32) -> Bool {
         code == ESRCH || code == ENOENT
     }
@@ -203,11 +222,22 @@ struct DarwinKernelProcessReader: KernelProcessReading, Sendable {
     enum ArgumentCaptureDisposition: Equatable, Sendable {
         /// The process is gone. The caller sees `nil`.
         case vanished
-        /// The target's address space has already been torn down. Confirm the
-        /// process really is gone before reporting absence.
-        case confirmDeathThenVanish
+        /// The argument region could not be copied. Measured 2026-08-04, this
+        /// has two causes and they are told apart only by observation: a dying
+        /// process whose address space has been removed, and a live process
+        /// REPLACING its address space mid-exec.
+        case addressSpaceUnreadable
         /// A genuine fault that must fail closed.
         case fault
+    }
+
+    /// What the caller should do after an unreadable argument region.
+    enum ArgumentFailureResolution: Equatable, Sendable {
+        /// The process is gone; report absence.
+        case vanished
+        /// The process is alive and replacing its address space. Its argv
+        /// becomes readable when exec completes, so observe again.
+        case observeAgain
     }
 
     /// Classification is deliberately site-specific: `indicatesVanishedProcess`
@@ -223,35 +253,42 @@ struct DarwinKernelProcessReader: KernelProcessReading, Sendable {
     /// process across 3.4M samples.
     static func disposition(forArgumentsErrno code: Int32) -> ArgumentCaptureDisposition {
         if indicatesVanishedProcess(code) || code == EINVAL { return .vanished }
-        if code == EIO { return .confirmDeathThenVanish }
+        if code == EIO { return .addressSpaceUnreadable }
         return .fault
     }
 
-    /// Resolves a `KERN_PROCARGS2` failure to either absence (`nil`) or a
-    /// thrown fault. Never returns arguments.
+    /// Resolves an unreadable argument region.
     ///
-    /// `confirmGone` is the second opinion for the teardown disposition: `EIO`
-    /// is only accepted as absence when an independent kernel route agrees the
-    /// process is gone. A PID recycled between the two reads as live and
-    /// therefore fails closed, which is the intended conservative direction.
+    /// `confirmGone` is the second opinion: `EIO` on a process that no longer
+    /// resolves is death, and absence is reported. `EIO` on one that still
+    /// resolves is an exec in progress — the process is alive and its argv
+    /// becomes readable when exec completes, so the caller observes again.
+    /// Reporting absence there would let a live descendant escape the tree
+    /// walk, which is the failure this project guards hardest against.
+    ///
+    /// The deadline bounds a process that never becomes readable, a state we
+    /// have not observed. Measured exec windows: p50 180 us, p99 283 us, max
+    /// 1147 us across `/usr/bin/true` and `/usr/bin/java`.
     static func resolveArgumentsFailure(
         errno code: Int32,
         pid: Int32,
+        deadlineExpired: Bool,
         confirmGone: () throws -> Bool
-    ) throws -> [String]? {
+    ) throws -> ArgumentFailureResolution {
         switch disposition(forArgumentsErrno: code) {
         case .vanished:
-            return nil
-        case .confirmDeathThenVanish:
-            guard try confirmGone() else {
+            return .vanished
+        case .addressSpaceUnreadable:
+            if try confirmGone() { return .vanished }
+            guard !deadlineExpired else {
                 throw inspectionError(
                     """
-                    sysctl(KERN_PROCARGS2) reported errno \(code) for PID \(pid), \
-                    meaning its address space is already gone, but the process is still live.
+                    sysctl(KERN_PROCARGS2) could not read PID \(pid)'s argument region \
+                    within the address-space replacement budget, and the process is still live.
                     """,
                     pid: pid)
             }
-            return nil
+            return .observeAgain
         case .fault:
             throw inspectionError(
                 "sysctl(KERN_PROCARGS2) failed for PID \(pid) with errno \(code).", pid: pid)

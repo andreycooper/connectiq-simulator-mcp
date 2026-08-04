@@ -283,6 +283,65 @@ struct AppSessionManagerTests {
         }
     }
 
+    /// A caller watching for a NEW marker needs a cursor at the end of the
+    /// buffer. `nextToken` cannot be that: it points at the last line of a
+    /// `limit`-bounded page over oldest-first lines, so using it as a baseline
+    /// silently matches lines that were already there.
+    @Test("latestToken points past every buffered line, whatever the page limit")
+    func latestTokenReachesEndOfBuffer() async throws {
+        let process = ControlledSessionProcess()
+        let manager = AppSessionManager(processRunner: SessionTestRunner(processes: [process]))
+        _ = try await publish(process: process, manager: manager)
+        process.emit((1...500).map { "line-\($0)" }.joined(separator: "\n") + "\n", stream: .stdout)
+
+        // A deliberately tiny page: nextToken lands near the START of the buffer.
+        let page = try await manager.logs(limit: 1)
+        #expect(page.lines.count == 1)
+
+        // The defect, stated as a test: nextToken is not a usable baseline.
+        let fromNext = try await manager.logs(sinceToken: page.nextToken, limit: 2_000)
+        #expect(fromNext.lines.isEmpty == false, "nextToken leaves earlier lines unread")
+
+        // latestToken is: nothing already buffered may follow it.
+        let fromLatest = try await manager.logs(sinceToken: page.latestToken, limit: 2_000)
+        #expect(fromLatest.lines.isEmpty, "latestToken must sit past every buffered line")
+
+        // ...and it still admits lines appended afterwards.
+        process.emit("AFTER_BASELINE\n", stream: .stdout)
+        let appended = try await manager.logs(sinceToken: page.latestToken, limit: 2_000)
+        #expect(appended.lines.map(\.text) == ["AFTER_BASELINE"])
+    }
+
+    @Test("nextToken equals latestToken exactly when the caller has caught up")
+    func caughtUpInvariant() async throws {
+        let process = ControlledSessionProcess()
+        let manager = AppSessionManager(processRunner: SessionTestRunner(processes: [process]))
+        _ = try await publish(process: process, manager: manager)
+        process.emit((1...50).map { "line-\($0)" }.joined(separator: "\n") + "\n", stream: .stdout)
+
+        let partial = try await manager.logs(limit: 10)
+        #expect(partial.nextToken != partial.latestToken, "unread lines remain")
+
+        let drained = try await manager.logs(sinceToken: partial.latestToken, limit: 2_000)
+        #expect(drained.lines.isEmpty)
+        #expect(drained.nextToken == drained.latestToken, "caught up")
+    }
+
+    @Test("a session with no output yet still returns a usable latestToken")
+    func emptyBufferLatestToken() async throws {
+        let process = ControlledSessionProcess()
+        let manager = AppSessionManager(processRunner: SessionTestRunner(processes: [process]))
+        _ = try await publish(process: process, manager: manager)
+
+        let empty = try await manager.logs(limit: 10)
+        #expect(empty.lines.isEmpty)
+        #expect(empty.nextToken == empty.latestToken)
+
+        process.emit("FIRST\n", stream: .stdout)
+        let after = try await manager.logs(sinceToken: empty.latestToken, limit: 2_000)
+        #expect(after.lines.map(\.text) == ["FIRST"])
+    }
+
     @Test("ring overflow and cursor pagination never duplicate lines")
     func boundedRingAndPagination() async throws {
         let process = ControlledSessionProcess()

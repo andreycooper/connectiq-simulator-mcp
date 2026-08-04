@@ -188,7 +188,8 @@ struct ToolSchemaTests {
                                 seq: 1, monotonicNanos: 123_456_789, stream: .stdout,
                                 text: "BOOT fixture-app", crash: false)
                         ],
-                        nextToken: "eyJ2IjoxLCJzZXEiOjF9"
+                        nextToken: "eyJ2IjoxLCJzZXEiOjF9",
+                        latestToken: "eyJ2IjoxLCJzZXEiOjF9"
                     ))
             }
         ),

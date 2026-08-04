@@ -379,7 +379,8 @@ public actor AppSessionManager: SimulatorSessionStopping {
             crashDetected: snapshot.crashDetected,
             droppedLines: snapshot.droppedLines,
             lines: lines,
-            nextToken: encodeCursor(sessionID: session.id, seq: lastReturned))
+            nextToken: encodeCursor(sessionID: session.id, seq: lastReturned),
+            latestToken: encodeCursor(sessionID: session.id, seq: snapshot.lastSequence))
     }
 
     // MARK: - Child lifecycle

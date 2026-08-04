@@ -443,6 +443,14 @@ public struct GetLogsResult: Codable, Equatable, Sendable {
     public let lines: [LogLine]
     public let nextToken: String
 
+    /// Cursor at the newest line currently buffered, independent of `limit`.
+    ///
+    /// `nextToken` resumes pagination from the last line *returned*, so on a
+    /// truncated page it points into the middle of the buffer and is not a
+    /// usable "from now on" baseline. This is. `nextToken == latestToken`
+    /// exactly when the caller has consumed everything buffered.
+    public let latestToken: String
+
     public init(
         sessionId: Int,
         state: String,
@@ -451,7 +459,8 @@ public struct GetLogsResult: Codable, Equatable, Sendable {
         crashDetected: Bool,
         droppedLines: Int,
         lines: [LogLine],
-        nextToken: String
+        nextToken: String,
+        latestToken: String
     ) {
         self.sessionId = sessionId
         self.state = state
@@ -461,6 +470,7 @@ public struct GetLogsResult: Codable, Equatable, Sendable {
         self.droppedLines = droppedLines
         self.lines = lines
         self.nextToken = nextToken
+        self.latestToken = latestToken
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -473,6 +483,7 @@ public struct GetLogsResult: Codable, Equatable, Sendable {
         try container.encode(droppedLines, forKey: .droppedLines)
         try container.encode(lines, forKey: .lines)
         try container.encode(nextToken, forKey: .nextToken)
+        try container.encode(latestToken, forKey: .latestToken)
     }
 }
 

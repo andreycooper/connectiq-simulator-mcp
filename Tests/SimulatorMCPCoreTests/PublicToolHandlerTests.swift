@@ -421,7 +421,8 @@ private enum Samples {
         ], device: "fenix6xpro", sdkPath: "/sdk", prgPath: "/tmp/app-test.prg")
     static let logs = GetLogsResult(
         sessionId: 1, state: "exited", terminationReason: "crash_detected", exitCode: 1,
-        crashDetected: true, droppedLines: 0, lines: [], nextToken: "token")
+        crashDetected: true, droppedLines: 0, lines: [], nextToken: "token",
+        latestToken: "token")
     static let png = Data("png".utf8)
     static let screenshot = ScreenshotResult(
         path: "/tmp/shot.png", mimeType: "image/png", width: 10, height: 20,

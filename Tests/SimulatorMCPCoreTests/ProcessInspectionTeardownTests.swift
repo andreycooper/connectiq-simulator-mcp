@@ -25,9 +25,10 @@ struct ProcessInspectionTeardownTests {
         // proc_find failed, or the caller may not read this process's argv.
         #expect(Reader.disposition(forArgumentsErrno: EINVAL) == .vanished)
 
-        // The address space is already torn down. Measured 2026-08-04 at
-        // 6.3%-12.3% of force-kills, scaling with the target's address space.
-        #expect(Reader.disposition(forArgumentsErrno: EIO) == .confirmDeathThenVanish)
+        // The argument region could not be copied. Two causes, told apart only
+        // by observation: a dying process, or one replacing its address space
+        // mid-exec. Measured 2026-08-04.
+        #expect(Reader.disposition(forArgumentsErrno: EIO) == .addressSpaceUnreadable)
 
         // Anything else stays a fault and must fail closed.
         #expect(Reader.disposition(forArgumentsErrno: EPERM) == .fault)
@@ -42,43 +43,97 @@ struct ProcessInspectionTeardownTests {
         var confirmations = 0
 
         // EIO with the process confirmed gone: absence, not a fault.
-        let resolved = try Reader.resolveArgumentsFailure(errno: EIO, pid: 4100) {
+        let resolved = try Reader.resolveArgumentsFailure(
+            errno: EIO, pid: 4100, deadlineExpired: false) {
             confirmations += 1
             return true
         }
-        #expect(resolved == nil)
+        #expect(resolved == .vanished)
         #expect(confirmations == 1, "the teardown disposition must take a second opinion")
 
         // A plain vanished errno needs no confirmation at all.
         confirmations = 0
-        #expect(try Reader.resolveArgumentsFailure(errno: ESRCH, pid: 4100) {
+        #expect(try Reader.resolveArgumentsFailure(
+            errno: ESRCH, pid: 4100, deadlineExpired: false) {
             confirmations += 1
             return true
-        } == nil)
+        } == .vanished)
         #expect(confirmations == 0)
     }
 
-    @Test("EIO on a process that is somehow still live fails closed")
-    func teardownFailsClosedWhenProcessSurvives() {
+    /// EIO has two causes, measured 2026-08-04. A dying process whose address
+    /// space has been removed no longer resolves; a process REPLACING its
+    /// address space mid-exec still does, and will have a readable argv once
+    /// exec completes. Treating the second as absence would let a live
+    /// descendant escape the tree walk, and failing on it aborts the operation
+    /// for an ordinary transient — which is what gateD12 hit.
+    @Test("EIO on a still-resolvable process means exec, and is observed again")
+    func execWindowIsObservedAgain() throws {
+        typealias Reader = SimulatorMCPCore.DarwinKernelProcessReader
+        let resolution = try Reader.resolveArgumentsFailure(
+            errno: EIO, pid: 4100, deadlineExpired: false) { false }
+        #expect(resolution == .observeAgain)
+    }
+
+    @Test("a process still replacing its address space past the deadline fails closed")
+    func execWindowFailsClosedPastDeadline() {
         typealias Reader = SimulatorMCPCore.DarwinKernelProcessReader
         do {
-            _ = try Reader.resolveArgumentsFailure(errno: EIO, pid: 4100) { false }
-            Issue.record("a live process must never be reported as absent")
+            _ = try Reader.resolveArgumentsFailure(
+                errno: EIO, pid: 4100, deadlineExpired: true) { false }
+            Issue.record("an unreadable live process must not be reported as absent")
         } catch let error as ToolError {
             #expect(error.code == "process_inspection_failed")
             #expect(error.details?["pid"] == .int(4100))
-            #expect(error.message.contains("still live"))
             #expect(!error.fix.isEmpty)
         } catch {
             Issue.record("kernel faults must use the stable ToolError contract: \(error)")
         }
     }
 
+    /// The real reproduction, and unlike the teardown window this one is
+    /// reliable: an exec produces thousands of EIO observations.
+    @Test("inspecting a process through an exec never aborts")
+    func snapshotToleratesExecWindow() throws {
+        let reader = SimulatorMCPCore.DarwinProcessIdentityReader()
+        var execs = 0
+        var inspections = 0
+        while execs < 40 {
+            let child = Process()
+            child.executableURL = URL(fileURLWithPath: "/bin/bash")
+            // bash replaces itself with a large, heavily linked binary.
+            child.arguments = ["-c", "exec /usr/bin/java -version"]
+            child.standardOutput = FileHandle.nullDevice
+            child.standardError = FileHandle.nullDevice
+            try child.run()
+            execs += 1
+            var polls = 0
+            while polls < 4000 {
+                polls += 1
+                do {
+                    guard try reader.snapshot(pid: child.processIdentifier) != nil else { break }
+                    inspections += 1
+                } catch let error as ToolError {
+                    child.waitUntilExit()
+                    Issue.record(
+                        """
+                        a process replacing its address space must not abort inspection, \
+                        but snapshot threw [\(error.code)]: \(error.message)
+                        """)
+                    return
+                }
+            }
+            child.waitUntilExit()
+        }
+        #expect(inspections > 0, "the poll must have inspected live processes")
+    }
+
     @Test("an unrecognised kernel errno still fails closed with the stable contract")
     func unrecognisedErrnoFailsClosed() {
         typealias Reader = SimulatorMCPCore.DarwinKernelProcessReader
         do {
-            _ = try Reader.resolveArgumentsFailure(errno: EPERM, pid: 4100) { true }
+            _ = try Reader.resolveArgumentsFailure(
+                errno: EPERM, pid: 4100, deadlineExpired: false) { true }
             Issue.record("an unrecognised errno must not be treated as absence")
         } catch let error as ToolError {
             #expect(error.code == "process_inspection_failed")

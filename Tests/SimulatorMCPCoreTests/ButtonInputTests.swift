@@ -1172,7 +1172,15 @@ struct ButtonInputTests {
             #expect(error?.code == code)
             #expect(error?.message == message)
             #expect(error?.fix == fix)
-            #expect(error?.details == nil)
+            // Attribution carries stable, enumerated values only. The raw
+            // transport payload must never reach a public error.
+            #expect(error?.details?["button"] == .string("up"))
+            #expect(error?.details?["transportStage"] != nil)
+            for value in error?.details?.values ?? [:].values {
+                if case .string(let text) = value {
+                    #expect(!text.contains("secret"), "raw platform text leaked into a public error")
+                }
+            }
         }
 
         let rawFake = RecordingTransport(error: NSError(domain: "secret-domain", code: 99, userInfo: [NSLocalizedDescriptionKey: "secret message", "details": "secret details"]))
@@ -1181,7 +1189,14 @@ struct ButtonInputTests {
         #expect(rawError?.message == "The input transport could not deliver the button.")
         #expect(rawError?.fix == "Restart the simulator, verify the selected input profile and Accessibility state, then retry.")
         #expect(rawError?.message.contains("secret") == false)
-        #expect(rawError?.details == nil)
+        // An unrecognised platform error is attributed as "unclassified" and
+        // still leaks nothing: the NSError's own text stays on stderr.
+        #expect(rawError?.details?["transportStage"] == .string("unclassified"))
+        for value in rawError?.details?.values ?? [:].values {
+            if case .string(let text) = value {
+                #expect(!text.contains("secret"), "raw platform text leaked into a public error")
+            }
+        }
     }
 
     /// `sim_start.activate` was withdrawn with the activated-start machinery. A
@@ -1213,6 +1228,34 @@ struct ButtonInputTests {
             #expect(
                 !fix.contains("activate"),
                 Comment(rawValue: "fix names the withdrawn sim_start.activate parameter: \(fix)"))
+        }
+    }
+
+    /// gateD10 and gateD13 both failed with input_delivery_failed carrying no
+    /// details at all — no button, no PID, and no indication of which transport
+    /// stage gave up. Every transport error case except two already carries a
+    /// payload, and translate() logged it to stderr and discarded it. A gate
+    /// failure has to be diagnosable from the error it returns.
+    @Test("a delivery failure names the transport stage that gave up", arguments: [
+        (ButtonInputTransportError.workspaceActivation("frontmost never settled"), "workspaceActivation"),
+        (ButtonInputTransportError.eventPost("CGEventPost returned 3"), "eventPost"),
+        (ButtonInputTransportError.eventConstruction("keycode 36 rejected"), "eventConstruction"),
+        (ButtonInputTransportError.accessibility("AXUIElement copy failed"), "accessibility"),
+    ])
+    func deliveryFailureNamesItsStage(
+        _ transportError: ButtonInputTransportError, _ expectedStage: String
+    ) async {
+        let service = makeService(transport: RecordingTransport(error: transportError))
+        do {
+            _ = try await service.press(PressButtonToolRequest(button: "up", allowFocus: true))
+            Issue.record("the transport error must surface")
+        } catch let error as ToolError {
+            #expect(error.code == "input_delivery_failed")
+            #expect(error.details?["transportStage"] == .string(expectedStage))
+            #expect(error.details?["button"] == .string("up"))
+            #expect(error.details?["simulatorPid"] != nil)
+        } catch {
+            Issue.record("unexpected error type: \(error)")
         }
     }
 
