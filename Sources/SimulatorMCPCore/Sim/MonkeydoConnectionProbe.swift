@@ -224,6 +224,18 @@ public struct MonkeydoConnectionProbe: MonkeydoConnectionProbing, Sendable {
     }
 
     private func captureTree(owned: OwnedMonkeydoProcess) throws -> CapturedTree {
+        try taggingInspectionSite(
+            "probe.captureTree",
+            details: [
+                "launcherPid": .int(Int(owned.launcher.pid)),
+                "launcherPgid": .int(Int(owned.launcher.processGroupId)),
+            ]
+        ) {
+            try captureTreeInspecting(owned: owned)
+        }
+    }
+
+    private func captureTreeInspecting(owned: OwnedMonkeydoProcess) throws -> CapturedTree {
         guard let launcher = try identityReader.snapshot(pid: owned.launcher.pid) else {
             throw ToolError(
                 code: "monkeydo_exited",
@@ -244,10 +256,16 @@ public struct MonkeydoConnectionProbe: MonkeydoConnectionProbing, Sendable {
                 guard visited.insert(pid).inserted else {
                     throw Self.probeError("the launcher descendant graph contained PID \(pid) twice")
                 }
-                guard let child = try identityReader.snapshot(pid: pid) else {
-                    throw Self.probeError(
-                        "kernel-listed launcher child PID \(pid) could not be identity-inspected")
-                }
+                // proc_listpids and snapshot are not atomic, and a process
+                // leaves its group only when it is REAPED, not when it dies:
+                // a killed, unreaped process stays listed while being
+                // uninspectable, measured against the kernel.
+                // So a listed child that cannot be inspected is an ordinary
+                // zombie. The probe signals nothing, and a zombie can neither
+                // run nor own a socket, so it is irrelevant to every question
+                // asked here. An inspectable PID that is not ours still fails
+                // the parent check below.
+                guard let child = try identityReader.snapshot(pid: pid) else { continue }
                 guard child.parentPid == parent.pid else {
                     throw Self.probeError(
                         "launcher child PID \(pid) changed parent during identity capture")
@@ -362,18 +380,29 @@ public struct MonkeydoConnectionProbe: MonkeydoConnectionProbing, Sendable {
                 "multiple fresh SDK-shell sockets matched validated simulator listeners")
         }
 
-        let groupPIDs = try identityReader.processGroupPIDs(
-            processGroupId: finalTree.launcher.processGroupId)
-        guard Set(groupPIDs).count == groupPIDs.count else {
-            throw Self.probeError("the kernel listed a launcher-group PID more than once")
-        }
-        var groupMembers: [ProcessIdentitySnapshot] = []
-        for pid in groupPIDs {
-            guard let member = try identityReader.snapshot(pid: pid) else {
-                throw Self.probeError(
-                    "kernel-listed launcher-group PID \(pid) could not be identity-inspected")
+        var groupMembers = try taggingInspectionSite(
+            "probe.finalizeGroup",
+            details: [
+                "launcherPid": .int(Int(finalTree.launcher.pid)),
+                "launcherPgid": .int(Int(finalTree.launcher.processGroupId)),
+            ]
+        ) { () -> [ProcessIdentitySnapshot] in
+            let groupPIDs = try identityReader.processGroupPIDs(
+                processGroupId: finalTree.launcher.processGroupId)
+            guard Set(groupPIDs).count == groupPIDs.count else {
+                throw Self.probeError("the kernel listed a launcher-group PID more than once")
             }
-            groupMembers.append(member)
+            var members: [ProcessIdentitySnapshot] = []
+            for pid in groupPIDs {
+                // Same reasoning as the descendant walk: a group member that
+                // cannot be inspected is a zombie awaiting reaping, not an
+                // anomaly. Unlike MonkeydoProcessLifecycle.captureGroup, this
+                // capture authorizes no signal — cleanup re-derives its own
+                // authorization through exactDedicatedGroup.
+                guard let member = try identityReader.snapshot(pid: pid) else { continue }
+                members.append(member)
+            }
+            return members
         }
         groupMembers.sort { $0.pid < $1.pid }
 
@@ -384,16 +413,34 @@ public struct MonkeydoConnectionProbe: MonkeydoConnectionProbing, Sendable {
             uniqueKeysWithValues: finalTree.all.map { ($0.pid, $0) })
         let groupByPID = Dictionary(
             uniqueKeysWithValues: groupMembers.map { ($0.pid, $0) })
+        // Every group member must be part of the owned tree, with the same
+        // identity. A live process in our group that is not ours is exactly
+        // what the anchoring requirement exists to catch.
         for (pid, member) in groupByPID {
-            if let treeMember = finalTreeByPID[pid], treeMember != member {
+            guard let treeMember = finalTreeByPID[pid] else {
+                throw Self.probeError(
+                    "launcher-group PID \(pid) is not part of the owned tree")
+            }
+            if treeMember != member {
                 throw Self.probeError(
                     "launcher-group PID \(pid) changed identity during final acceptance")
+            }
+        }
+        // The tree is captured before the group, so a descendant reaped in
+        // between is legitimately in one and not the other. Exact equality
+        // cannot express that. Tolerated only when confirmed gone: one that
+        // left the group while still alive stays fatal.
+        for pid in finalTreeByPID.keys where groupByPID[pid] == nil {
+            guard try identityReader.snapshot(pid: pid) == nil else {
+                throw Self.probeError(
+                    "owned PID \(pid) left launcher group "
+                        + "\(finalTree.launcher.processGroupId) while still alive")
             }
         }
         let fullyAnchored = finalTree.launcher.processGroupId > 0
             && finalTree.launcher.processGroupId == finalTree.launcher.pid
             && finalTree.launcher.processGroupId != serverProcess.processGroupId
-            && finalTreeByPID == groupByPID
+            && groupByPID[finalTree.launcher.pid] != nil
             && groupMembers.allSatisfy {
                 $0.processGroupId == finalTree.launcher.processGroupId
             }

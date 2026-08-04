@@ -44,20 +44,42 @@ heuristic, guess another constant, or skip a gate.
   assertions), never by fixed delays. Use `ContinuousClock` for all timing.
 - **monkeydo's exit code is unreliable** (SDK regex bug). Test transcripts
   are authoritative — parse them, never trust the code.
-- **Input capability:** `press_button` is verified for `fenix6xpro`
-  (`enter`, `esc`, `up`, `down`) on SDK 8.4.1 and 9.1.0. Capability is an
-  explicit allowlist keyed by exact device id and SDK version; every other
-  device advertises `inputSupported=false`, `buttons=[]`, and
-  `inputProfile=null`. Device JSON describes hardware; it is never proof of
-  an automation transport. Three delivery facts are load-bearing and measured
-  in `fenix6xpro-focused-delivery.json` — do not "simplify" any of them away:
+- **Input capability:** `press_button` is verified for **19 fēnix devices**
+  (`enter`, `esc`, `up`, `down`), qualified through the delivery gate on
+  2026-08-04 — 32/32 device×SDK combinations, delivery read only from fixture
+  markers.
+  - **Both SDKs (8.4.1 and 9.1.0), 13 devices:** `fenix6`, `fenix6pro`,
+    `fenix6s`, `fenix6spro`, `fenix6xpro`, `fenix7`, `fenix7pro`,
+    `fenix7pronowifi`, `fenix7s`, `fenix7spro`, `fenix7x`, `fenix7xpro`,
+    `fenix7xpronowifi`.
+  - **SDK 9.1.0 only, 6 devices:** `fenix843mm`, `fenix847mm`, `fenix8pro47mm`,
+    `fenix8solar47mm`, `fenix8solar51mm`, `fenixe`. The fēnix 8 and fēnix E
+    profiles are single-SDK verified: they do not build on 8.4.1, so capability
+    is claimed for 9.1.0 and nothing else.
+
+  Capability is an explicit allowlist keyed by exact device id and SDK version;
+  every other device advertises `inputSupported=false`, `buttons=[]`, and
+  `inputProfile=null` — including `fenix3`, `fenix5` and `fenixchronos`, which
+  share the key layout and must stay fail-closed. Device JSON describes
+  hardware; it is never proof of an automation transport.
+
+  The device set and the device→key-code mapping are compiled in
+  (`qualifiedDevices` and the layout group in `ButtonInput.swift`), and the
+  shipped profile resources must equal that set exactly — a missing file and an
+  extra file both fail the load. `scripts/audit-plan.sh` checks every qualified
+  device fail-closed in both directions.
+
+  Three delivery facts are load-bearing and measured per device in
+  `<device>-focused-delivery.json` — do not "simplify" any of them away:
   a press must hold the key down for the profile's `minimumPressMs`, because a
   key pair posted with no dwell is never delivered; an inert `kVK_Shift`
   warm-up absorbs the first key event after an app launch, which the simulator
   always consumes; and posting is authorized by a freshly constructed
   `NSRunningApplication(processIdentifier:).isActive`, because every cached
   workspace property freezes in a process that never pumps a main run loop.
-  There is no `menu` button on this device: menu is `up` with `holdMs >= 1000`.
+  No device in the family exposes a `menu` button: menu is `up` with
+  `holdMs >= 1000`. All 19 share one layout group and identical key codes
+  (`36/53/126/125`), measured — not inferred from key names.
 - **Secrets:** `SIM_DEVELOPER_KEY` points to a Connect IQ developer key
   stored **outside** this repository. No key material is ever committed.
 
@@ -97,7 +119,9 @@ both TCC grants (Screen Recording, Accessibility).
 - Runtime probes: `sdk-8.4.1-runtime.json`, `sdk-9.1.0-runtime.json`.
 - Launcher contracts: `monkeydo-process-8.4.1.json`,
   `monkeydo-process-9.1.0.json`, `monkeydo-launch.json`.
-- The button delivery contract: `fenix6xpro-focused-delivery.json` (dwell
+- The button delivery contracts: one `<device>-focused-delivery.json` per
+  qualified device, 19 in total. `fenix6xpro-focused-delivery.json` is the
+  reference (dwell
   floor, first-key warm-up, active-application observation, activation route,
   rejected buttons, and the installed-server acceptance result), with the
   verified mapping in `fenix6xpro-input.json`.

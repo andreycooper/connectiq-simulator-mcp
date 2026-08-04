@@ -16,18 +16,29 @@ struct ButtonInputTests {
         ])
     }
 
-    @Test("fenix6xpro advertises its verified buttons and other devices stay unsupported")
+    /// Exactly the qualified devices advertise input, and every other installed
+    /// profile stays fail-closed — including `fenix3`, `fenix5` and
+    /// `fenixchronos`, which share the same physical key layout and would be
+    /// swept in by any shape heuristic.
+    @Test("only qualified devices advertise input capability")
     func publicDeviceCapability() async throws {
         let devices = try await ToolHandlerServices.live().listDevices(
             ListDevicesToolRequest(projectPath: nil, jungle: nil, sdk: nil))
-        let fenix = try #require(devices.devices.first { $0.deviceId == "fenix6xpro" })
-        #expect(fenix.inputSupported)
-        #expect(fenix.buttons == ["enter", "esc", "up", "down"])
-        #expect(fenix.inputProfile == "fenix6xpro-verified/3")
-        for other in devices.devices where other.deviceId != "fenix6xpro" {
-            #expect(other.inputSupported == false)
-            #expect(other.buttons.isEmpty)
-            #expect(other.inputProfile == nil)
+        let supported = Set(devices.devices.filter(\.inputSupported).map(\.deviceId))
+        #expect(supported == InputProfileLoader.qualifiedDevices)
+
+        for device in devices.devices where InputProfileLoader.qualifiedDevices.contains(device.deviceId) {
+            #expect(device.buttons == ["enter", "esc", "up", "down"])
+            #expect(device.inputProfile == "\(device.deviceId)-verified/3")
+        }
+        for device in devices.devices where !InputProfileLoader.qualifiedDevices.contains(device.deviceId) {
+            #expect(device.inputSupported == false)
+            #expect(device.buttons.isEmpty)
+            #expect(device.inputProfile == nil)
+        }
+        for lookalike in ["fenix3", "fenix5", "fenixchronos"] {
+            let device = try #require(devices.devices.first { $0.deviceId == lookalike })
+            #expect(device.inputSupported == false)
         }
     }
 
@@ -166,6 +177,210 @@ struct ButtonInputTests {
         object["transportProfile"] = transport
         #expect(throws: InputProfileValidationError.self) {
             try InputProfileLoader.decodeQualification(JSONSerialization.data(withJSONObject: object))
+        }
+    }
+
+    /// fēnix 8 and fēnix E require Connect IQ API level 6.0.0, which SDK 8.4.1
+    /// cannot compile (it caps at 5.2.0). SDK coverage is therefore per-device
+    /// data, not a global constant — but the three places that declare it must
+    /// still agree exactly, or a profile could claim a gate it never ran.
+    @Test("SDK coverage is per profile and must agree across transport and evidence")
+    func perProfileSdkCoverage() throws {
+        let data = try InputProfileLoader.qualificationCandidateData()
+
+        func mutate(_ change: (inout [String: Any]) throws -> Void) throws -> Data {
+            var object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            try change(&object)
+            return try JSONSerialization.data(withJSONObject: object)
+        }
+
+        func setCoverage(
+            _ object: inout [String: Any], sdkEntries: [String], evidence sdks: [String],
+            digests: [String]
+        ) throws {
+            var transport = try #require(object["transportProfile"] as? [String: Any])
+            let entries = try #require(transport["sdkEntries"] as? [String: Any])
+            let template = try #require(entries["9.1.0"])
+            transport["sdkEntries"] = Dictionary(
+                uniqueKeysWithValues: sdkEntries.map { ($0, template) })
+            object["transportProfile"] = transport
+
+            var evidenceObject = try #require(object["evidence"] as? [String: Any])
+            evidenceObject["sdks"] = sdks
+            evidenceObject["gateTranscriptDigests"] = Dictionary(
+                uniqueKeysWithValues: digests.map { ($0, "") })
+            object["evidence"] = evidenceObject
+        }
+
+        // A device that only exists on 9.1.0 is a valid qualification profile.
+        let singleSdk = try mutate {
+            try setCoverage(
+                &$0, sdkEntries: ["9.1.0"], evidence: ["9.1.0"], digests: ["9.1.0"])
+        }
+        let loaded = try InputProfileLoader.decodeQualification(singleSdk)
+        #expect(loaded.profile.transport.sdkEntries.keys.sorted() == ["9.1.0"])
+        #expect(loaded.profile.core.evidence.sdks == ["9.1.0"])
+
+        // Declaring no SDK at all claims capability backed by no gate run.
+        let noSdk = try mutate {
+            try setCoverage(
+                &$0, sdkEntries: [], evidence: [], digests: [])
+        }
+        #expect(throws: InputProfileValidationError.self) {
+            try InputProfileLoader.decodeQualification(noSdk)
+        }
+
+        // Evidence must not claim an SDK the transport cannot drive.
+        let evidenceOverclaims = try mutate {
+            try setCoverage(
+                &$0, sdkEntries: ["9.1.0"], evidence: ["8.4.1", "9.1.0"], digests: ["9.1.0"])
+        }
+        #expect(throws: InputProfileValidationError.self) {
+            try InputProfileLoader.decodeQualification(evidenceOverclaims)
+        }
+
+        // Every declared SDK needs its own gate transcript digest.
+        let digestGap = try mutate {
+            try setCoverage(
+                &$0, sdkEntries: ["8.4.1", "9.1.0"], evidence: ["8.4.1", "9.1.0"], digests: ["9.1.0"])
+        }
+        #expect(throws: InputProfileValidationError.self) {
+            try InputProfileLoader.decodeQualification(digestGap)
+        }
+
+        // An SDK version this server does not recognise is not a gate.
+        let unknownSdk = try mutate {
+            try setCoverage(
+                &$0, sdkEntries: ["7.0.0"], evidence: ["7.0.0"], digests: ["7.0.0"])
+        }
+        #expect(throws: InputProfileValidationError.self) {
+            try InputProfileLoader.decodeQualification(unknownSdk)
+        }
+    }
+
+    /// A1: capability is keyed by exact device id from a compiled-in set. The
+    /// public entry point must never accept a device outside it, however well
+    /// formed the profile is — this is the guard D1 originally deleted.
+    @Test("the qualified device set is compiled in, not taken from the profile")
+    func compiledInDeviceAllowlist() throws {
+        let data = try InputProfileLoader.qualificationCandidateData()
+        var object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        object["device"] = "fenix5"
+        object["profileVersion"] = "fenix5-verified/3"
+        let forged = try JSONSerialization.data(withJSONObject: object)
+
+        #expect(throws: InputProfileValidationError.self) {
+            try InputProfileLoader.decodeQualification(forged)
+        }
+        // The same bytes are decodable only when a caller widens the allowlist
+        // explicitly, which no profile and no resource file can do for itself.
+        let widened = try InputProfileLoader.decodeQualification(forged, allowing: ["fenix5"])
+        #expect(widened.profile.core.device == "fenix5")
+    }
+
+    /// A2: the device-to-key-code assignment is compiled in. Every permutation
+    /// of the permitted codes is still four permitted codes, so only equality
+    /// against the layout group catches a transposed mapping.
+    @Test("a permuted key mapping is rejected against the compiled-in layout group")
+    func permutedMappingRejected() throws {
+        let data = try InputProfileLoader.qualificationCandidateData()
+        var object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        var transport = try #require(object["transportProfile"] as? [String: Any])
+        var entries = try #require(transport["sdkEntries"] as? [String: Any])
+        var entry = try #require(entries["9.1.0"] as? [String: Any])
+        entry["enter"] = ["keyCode": 53]
+        entry["esc"] = ["keyCode": 36]
+        entries["9.1.0"] = entry
+        transport["sdkEntries"] = entries
+        object["transportProfile"] = transport
+
+        #expect(throws: InputProfileValidationError.self) {
+            try InputProfileLoader.decodeQualification(
+                try JSONSerialization.data(withJSONObject: object))
+        }
+    }
+
+    /// A1 again, from the other side: the registry serves several devices, and
+    /// two profiles claiming the same device id are a load failure rather than
+    /// a last-one-wins overwrite.
+    @Test("the capability registry is keyed by device and rejects duplicates")
+    func multiDeviceRegistry() throws {
+        let data = try InputProfileLoader.qualificationCandidateData()
+        func profile(device: String) throws -> QualifiedInputProfile {
+            var object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            object["device"] = device
+            object["profileVersion"] = "\(device)-verified/3"
+            return try InputProfileLoader.decodeQualification(
+                try JSONSerialization.data(withJSONObject: object), allowing: [device])
+        }
+
+        let registry = try InputCapabilityRegistry(
+            [try profile(device: "fenix6xpro"), try profile(device: "fenix7xpro")])
+        #expect(registry.capability(device: "fenix6xpro", sdkVersion: "9.1.0") != nil)
+        #expect(registry.capability(device: "fenix7xpro", sdkVersion: "8.4.1") != nil)
+        #expect(registry.capability(device: "fenix5", sdkVersion: "9.1.0") == nil)
+        #expect(registry.capability(device: "fenix7xpro", sdkVersion: "7.0.0") == nil)
+
+        #expect(throws: InputProfileValidationError.self) {
+            try InputCapabilityRegistry(
+                [try profile(device: "fenix6xpro"), try profile(device: "fenix6xpro")])
+        }
+    }
+
+    /// A1: the shipped resources and the compiled-in set must agree exactly, so
+    /// capability can never become a filesystem side effect in either
+    /// direction — an unlisted resource is as fatal as a missing one.
+    @Test("shipped profile resources equal the compiled-in qualified device set")
+    func shippedResourcesMatchAllowlist() throws {
+        let profiles = try InputProfileLoader.loadQualificationCandidates()
+        #expect(Set(profiles.map { $0.profile.core.device }) == InputProfileLoader.qualifiedDevices)
+    }
+
+    /// A5. Two independently authored artifacts must agree: the shipped profile
+    /// resource and the measured delivery contract produced by the gate. This
+    /// is what carries the evidence role the compiled-in key code constant used
+    /// to carry — a copy-paste or agent error shows up offline and for free,
+    /// and forging capability becomes a conspicuous two-file diff that includes
+    /// a fabricated measurement document.
+    @Test("every shipped profile agrees with its own measured delivery contract")
+    func profilesAgreeWithDeliveryContracts() throws {
+        struct DeliveryContract: Decodable {
+            struct Facts: Decodable {
+                struct Buttons: Decodable { let verified: [String: Int] }
+                let buttons: Buttons
+            }
+            let device: String
+            let sdks: [String]
+            let facts: Facts
+        }
+
+        let profiles = try InputProfileLoader.loadQualificationCandidates()
+        #expect(!profiles.isEmpty)
+
+        for qualified in profiles {
+            let profile = qualified.profile
+            let device = profile.core.device
+            let url = repositoryRoot().appending(
+                path: "docs/verification/simulator-contracts/\(device)-focused-delivery.json")
+            #expect(
+                FileManager.default.isReadableFile(atPath: url.path),
+                Comment(rawValue: "\(device): no measured delivery contract"))
+            guard FileManager.default.isReadableFile(atPath: url.path) else { continue }
+
+            let contract = try JSONDecoder().decode(
+                DeliveryContract.self, from: try Data(contentsOf: url))
+            #expect(contract.device == device)
+            #expect(Set(contract.sdks) == Set(profile.transport.sdkEntries.keys))
+
+            let measured = Dictionary(
+                uniqueKeysWithValues: contract.facts.buttons.verified.map {
+                    ($0, ["keyCode": JSONValue.int($1)])
+                })
+            for (sdk, entry) in profile.transport.sdkEntries {
+                #expect(
+                    entry == measured,
+                    Comment(rawValue: "\(device) on \(sdk): profile disagrees with measurement"))
+            }
         }
     }
 
@@ -947,7 +1162,7 @@ struct ButtonInputTests {
             (.accessibilityDenied("secret"), "accessibility_denied", "Accessibility permission denied button delivery.", "Grant Accessibility permission to simulator-mcp, then retry."),
             (.accessibility("secret"), "input_delivery_failed", "The input transport could not deliver the button.", "Restart the simulator, verify the selected input profile and Accessibility state, then retry."),
             (.subprocess("secret"), "input_delivery_failed", "The input transport could not deliver the button.", "Restart the simulator, verify the selected input profile and Accessibility state, then retry."),
-            (.workspaceActivation("secret"), "input_delivery_failed", "The input transport could not deliver the button.", "sim_stop -> sim_start(activate=true) -> run_app -> press_button(allowFocus=true)"),
+            (.workspaceActivation("secret"), "input_delivery_failed", "The input transport could not deliver the button.", "sim_stop -> sim_start -> run_app -> press_button(allowFocus=true)"),
             (.eventPost("secret"), "input_delivery_failed", "The input transport could not deliver the button.", "Restart the simulator, verify the selected input profile and Accessibility state, then retry."),
         ]
         for (raw, code, message, fix) in cases {
@@ -967,6 +1182,38 @@ struct ButtonInputTests {
         #expect(rawError?.fix == "Restart the simulator, verify the selected input profile and Accessibility state, then retry.")
         #expect(rawError?.message.contains("secret") == false)
         #expect(rawError?.details == nil)
+    }
+
+    /// `sim_start.activate` was withdrawn with the activated-start machinery. A
+    /// fix that still names it costs an agent a retry and a second error, so no
+    /// remedy this service emits may mention a parameter the schema rejects.
+    @Test("error fixes never name a withdrawn tool parameter")
+    func fixesAvoidWithdrawnParameters() async throws {
+        let transportFailures: [ButtonInputTransportError] = [
+            .accessibilityDenied("secret"), .accessibility("secret"), .subprocess("secret"),
+            .workspaceActivation("secret"), .eventPost("secret"), .keyboardLayoutUnsupported,
+            .eventConstruction("secret"), .eventPostingDenied,
+        ]
+        var fixes: [String] = []
+        for raw in transportFailures {
+            let error = await #expect(throws: ToolError.self) {
+                try await makeService(transport: RecordingTransport(error: raw)).press(
+                    PressButtonToolRequest(button: "up"))
+            }
+            fixes.append(try #require(error?.fix))
+        }
+        let refused = await #expect(throws: ToolError.self) {
+            try await makeService(transport: RecordingTransport(requiresFocus: true)).press(
+                PressButtonToolRequest(button: "up", allowFocus: false))
+        }
+        fixes.append(try #require(refused?.fix))
+
+        for fix in fixes {
+            #expect(!fix.isEmpty)
+            #expect(
+                !fix.contains("activate"),
+                Comment(rawValue: "fix names the withdrawn sim_start.activate parameter: \(fix)"))
+        }
     }
 
     private func makeService(transport: RecordingTransport) -> ButtonInputService {

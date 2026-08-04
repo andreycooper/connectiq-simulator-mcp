@@ -275,12 +275,26 @@ public struct MonkeydoProcessLifecycle: MonkeydoProcessLifecycling, Sendable {
     private func captureGroup(
         processGroupId: Int32
     ) throws -> [Int32: ProcessIdentitySnapshot] {
+        try taggingInspectionSite(
+            "cleanup.captureGroup",
+            details: ["launcherPgid": .int(Int(processGroupId))]
+        ) {
+            try captureGroupInspecting(processGroupId: processGroupId)
+        }
+    }
+
+    private func captureGroupInspecting(
+        processGroupId: Int32
+    ) throws -> [Int32: ProcessIdentitySnapshot] {
         let pids = try identityReader.processGroupPIDs(processGroupId: processGroupId)
         guard Set(pids).count == pids.count else {
             throw cleanupError("the kernel listed a launcher-group PID more than once")
         }
         var result: [Int32: ProcessIdentitySnapshot] = [:]
         for pid in pids {
+            // Deliberately NOT the descendant walk's skip: a group signal hits
+            // every member at once, so one unverifiable member means the whole
+            // group is unsafe to signal. Fail closed.
             guard let member = try identityReader.snapshot(pid: pid) else {
                 throw cleanupError(
                     "kernel-listed launcher-group PID \(pid) could not be identity-inspected")
@@ -549,6 +563,20 @@ public struct MonkeydoProcessLifecycle: MonkeydoProcessLifecycling, Sendable {
     }
 
     private func captureCleanupTree(_ owned: OwnedMonkeydoProcess) throws -> CleanupTree {
+        try taggingInspectionSite(
+            "cleanup.captureTree",
+            details: [
+                "launcherPid": .int(Int(owned.launcher.pid)),
+                "launcherPgid": .int(Int(owned.launcher.processGroupId)),
+            ]
+        ) {
+            try captureCleanupTreeInspecting(owned)
+        }
+    }
+
+    private func captureCleanupTreeInspecting(
+        _ owned: OwnedMonkeydoProcess
+    ) throws -> CleanupTree {
         guard let launcher = try identityReader.snapshot(pid: owned.launcher.pid) else {
             throw cleanupError(
                 "the owned launcher disappeared before its descendants could be authorized")
@@ -566,10 +594,14 @@ public struct MonkeydoProcessLifecycle: MonkeydoProcessLifecycling, Sendable {
                 guard visited.insert(pid).inserted else {
                     throw cleanupError("the owned descendant graph contained PID \(pid) twice")
                 }
-                guard let child = try identityReader.snapshot(pid: pid) else {
-                    throw cleanupError(
-                        "kernel-listed owned child PID \(pid) could not be identity-inspected")
-                }
+                // proc_listpids and snapshot are not atomic. A descendant that
+                // exits in the window between them is reported by the kernel
+                // list and is then uninspectable. That is a normal race, not a
+                // fault: the process is gone, there is nothing left to signal,
+                // and aborting here would strand the descendants that are still
+                // alive. Skipping is the conservative choice — an inspectable
+                // PID that is not ours still fails the parent check below.
+                guard let child = try identityReader.snapshot(pid: pid) else { continue }
                 guard child.parentPid == parent.pid else {
                     throw cleanupError(
                         "owned child PID \(pid) changed parent before signalling")
@@ -713,6 +745,15 @@ public struct MonkeydoProcessLifecycle: MonkeydoProcessLifecycling, Sendable {
     }
 
     private func captureDescendants(rootPID: Int32) throws -> RootedDescendants {
+        try taggingInspectionSite(
+            "cleanup.captureDescendants",
+            details: ["rootPid": .int(Int(rootPID))]
+        ) {
+            try captureDescendantsInspecting(rootPID: rootPID)
+        }
+    }
+
+    private func captureDescendantsInspecting(rootPID: Int32) throws -> RootedDescendants {
         var snapshots: [ProcessIdentitySnapshot] = []
         var depths: [Int32: Int] = [:]
         var pending: [(pid: Int32, depth: Int)] = [(rootPID, 0)]
@@ -791,6 +832,23 @@ public struct MonkeydoProcessLifecycle: MonkeydoProcessLifecycling, Sendable {
     }
 
     private func requireExactLauncher(
+        pid: Int32,
+        monkeydo: URL,
+        prg: URL,
+        device: String,
+        testArguments: [String]
+    ) throws -> ProcessIdentitySnapshot {
+        try taggingInspectionSite(
+            "launch.requireExactLauncher",
+            details: ["launcherPid": .int(Int(pid))]
+        ) {
+            try requireExactLauncherInspecting(
+                pid: pid, monkeydo: monkeydo, prg: prg, device: device,
+                testArguments: testArguments)
+        }
+    }
+
+    private func requireExactLauncherInspecting(
         pid: Int32,
         monkeydo: URL,
         prg: URL,

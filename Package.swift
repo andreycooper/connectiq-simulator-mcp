@@ -26,10 +26,17 @@ let package = Package(
                 .product(name: "MCP", package: "swift-sdk")
             ]
         ),
+        // Test-only fixture. Deliberately not a package product, and placed
+        // outside Sources/ so it stays clear of the architecture boundary.
+        .executableTarget(
+            name: "MemoryHoldFixture",
+            path: "Tests/fixtures/MemoryHoldFixture"
+        ),
         .testTarget(
             name: "SimulatorMCPCoreTests",
             dependencies: [
                 "SimulatorMCPCore",
+                "MemoryHoldFixture",
                 .product(name: "MCP", package: "swift-sdk")
             ],
             resources: [.copy("Fixtures")]

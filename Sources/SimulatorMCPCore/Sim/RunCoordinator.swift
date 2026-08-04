@@ -164,8 +164,12 @@ public struct RunCoordinator: Sendable {
                     force: request.rebuild))
                 let prg = try requireArtifact(build)
 
-                try await sessionManager.prepareCurrentForReplacement()
-                try await controller.terminateActiveMonkeydo(inside: .runApp)
+                try await taggingCleanupSite("runApp.prepareCurrentForReplacement") {
+                    try await sessionManager.prepareCurrentForReplacement()
+                }
+                try await taggingCleanupSite("runApp.terminateActiveMonkeydo") {
+                    try await controller.terminateActiveMonkeydo(inside: .runApp)
+                }
 
                 let deadline = makeDeadline(launchTimeout)
                 var lastError: Error?
@@ -195,7 +199,9 @@ public struct RunCoordinator: Sendable {
                             pending, device: request.device, prgPath: prg, sdk: request.sdk)
                         committed = true
                         guard let wireID = Int(exactly: sessionID) else {
-                            try await sessionManager.terminateCurrent(reason: .killed)
+                            try await taggingCleanupSite("runApp.terminateCurrent") {
+                                try await sessionManager.terminateCurrent(reason: .killed)
+                            }
                             throw ToolError(
                                 code: "session_id_exhausted",
                                 message: "The app session ID cannot be represented on the public wire contract.",
@@ -211,9 +217,13 @@ public struct RunCoordinator: Sendable {
                     } catch {
                         var attemptOutput: [String] = []
                         if committed {
-                            try await sessionManager.terminateCurrent(reason: .killed)
+                            try await taggingCleanupSite("runApp.terminateCurrent") {
+                                try await sessionManager.terminateCurrent(reason: .killed)
+                            }
                         } else {
-                            attemptOutput = try await sessionManager.abortCapturingTail(pending)
+                            attemptOutput = try await taggingCleanupSite("runApp.abortCapturingTail") {
+                                try await sessionManager.abortCapturingTail(pending)
+                            }
                             try await controller.clearActiveMonkeydo(
                                 expectedLauncher: pending.owned.launcher.stableIdentity,
                                 device: nil,
@@ -548,5 +558,20 @@ final class OrderedTranscriptCollector: @unchecked Sendable {
     private func record(_ line: String, stream: LogStream) {
         recorded.append(TranscriptEvent(seq: nextSequence, stream: stream, line: line))
         nextSequence += 1
+    }
+}
+
+/// Diagnostic only: names which cleanup call site raised, so a failing gate
+/// identifies the path instead of leaving four candidates. Re-thrown with the
+/// original code, message and fix intact.
+@Sendable func taggingCleanupSite<T>(
+    _ site: String, _ body: () async throws -> T
+) async throws -> T {
+    do { return try await body() } catch let error as ToolError {
+        Log.err("cleanup_site=\(site) code=\(error.code) message=\(error.message)")
+        var details = error.details ?? [:]
+        details["cleanupSite"] = .string(site)
+        throw ToolError(
+            code: error.code, message: error.message, fix: error.fix, details: details)
     }
 }

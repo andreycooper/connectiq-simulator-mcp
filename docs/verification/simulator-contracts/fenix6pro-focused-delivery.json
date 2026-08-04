@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "capturedOn": "2026-08-03",
+  "device": "fenix6pro",
+  "macOSVersion": "26.5.2",
+  "sdks": [
+    "8.4.1",
+    "9.1.0"
+  ],
+  "summary": "Focused-key delivery measured for fenix6pro on 8.4.1, 9.1.0.",
+  "method": {
+    "measurement": "Task 0/5 family probe: real FocusedKeyTransport, simulator control through the installed signed server.",
+    "deliveryEvidence": "fixture FIXTURE_KEY markers read through get_logs with an advancing cursor",
+    "presses": "enter, esc, up, down, plus a 1000ms hold of up, per SDK"
+  },
+  "facts": {
+    "buttons": {
+      "verified": {
+        "enter": 36,
+        "esc": 53,
+        "up": 126,
+        "down": 125
+      },
+      "rejected": {
+        "menu": {
+          "finding": "not probed on this device",
+          "reason": "fenix 6/7/8 have no menu key; menu is a long press of up. Withdrawn family-wide by the 2026-08-03 delivery amendment."
+        }
+      }
+    }
+  },
+  "transportFacts": {
+    "inheritedFrom": "fenix6xpro-focused-delivery.json",
+    "note": "The dwell floor, the inert first-key warm-up and the activation route are properties of the transport, not of the device. They were not re-measured per device; this contract records only what this device's probe actually observed."
+  },
+  "acceptance": {
+    "probe": "pass, 5 of 5 presses per SDK",
+    "gate": "see the parameterised delivery gate"
+  }
+}

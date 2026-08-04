@@ -21,15 +21,26 @@ extension ToolHandlerServices {
     /// used by sim_start/run_app/run_tests in this composition. Construction
     /// is throwing and never falls back to the immutable v1 service surface.
     public static func qualificationCandidate() throws -> ToolHandlerServices {
-        let profile = try InputProfileLoader.loadQualificationCandidate()
-        let composition = liveComposition(capabilities: try InputCapabilityRegistry(profile))
-        let transport = try FocusedKeyTransport(
-            profile: profile, dependencies: .live, clock: ContinuousClock(),
-            diagnosticSink: { Log.err("focused_key_diagnostic \($0)") })
+        let qualified = try InputProfileLoader.loadQualificationCandidates()
+        guard let primary = qualified.min(by: { $0.profile.core.device < $1.profile.core.device })
+        else {
+            throw InputProfileValidationError.malformed("no qualification profile is shipped")
+        }
+        let composition = liveComposition(capabilities: try InputCapabilityRegistry(qualified))
+        let devices = try qualified.map { profile in
+            (
+                profile: profile.profile,
+                transports: [
+                    try FocusedKeyTransport(
+                        profile: profile, dependencies: .live, clock: ContinuousClock(),
+                        diagnosticSink: { Log.err("focused_key_diagnostic \($0)") })
+                ] as [any ButtonPressing]
+            )
+        }
         let buttonService = ButtonInputService(
-            profile: profile.profile, transport: transport,
+            devices: devices,
             operationRunner: ButtonOperationRunner(controller: composition.controller))
-        return try composition.services.qualification(profile: profile) {
+        return try composition.services.qualification(profile: primary) {
             try await buttonService.press($0)
         }
     }

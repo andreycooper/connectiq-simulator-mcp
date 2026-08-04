@@ -104,6 +104,25 @@ struct MonkeydoProcessLifecycleTests {
         #expect(fixture.runtime.values == [LifecycleSignalCall(pid: -100, signal: SIGTERM)])
     }
 
+    /// proc_listpids and snapshot are not atomic. A descendant that exits in
+    /// between is reported by the kernel list and is then uninspectable, which
+    /// is a normal race and not a fault: there is nothing left to signal. It
+    /// must not abort cleanup of the processes that ARE still alive.
+    @Test("a descendant that exits between listing and inspection does not abort cleanup")
+    func vanishedDescendantDoesNotAbortCleanup() async throws {
+        // 102 is listed as a child of 101 but has no snapshot: it exited in the
+        // window between the two calls.
+        let fixture = mutableCleanupFixture(uninspectable: [102])
+        let lifecycle = MonkeydoProcessLifecycle(
+            processRunner: LifecycleRunner(process: LifecycleRunningProcess(pid: 100)),
+            identityReader: fixture.runtime,
+            signalSender: fixture.runtime,
+            serverPID: 500)
+
+        try await lifecycle.terminate(fixture.owned, grace: .zero)
+        #expect(fixture.runtime.contains(pid: 101) == false)
+    }
+
     @Test("dedicated group TERM passively awaits verified descendants after launcher exit")
     func dedicatedGroupWaitsForVerifiedNaturalExit() async throws {
         let fixture = mutableCleanupFixture(
@@ -537,6 +556,7 @@ private func mutableCleanupFixture(
     spawnAfterSignal: [Int32: ProcessIdentitySnapshot] = [:],
     changeOnFirstGroupCapture: (Int32, ProcessIdentitySnapshot)? = nil,
     failingPID: Int32? = nil,
+    uninspectable: Set<Int32> = [],
     naturallyExitGroupAfterFirstPostSignalPoll: Bool = false,
     vanishListedPIDAfterFirstPostSignalGroupList: Int32? = nil,
     movePIDToOtherGroupAfterGroupTERM: Int32? = nil
@@ -552,6 +572,7 @@ private func mutableCleanupFixture(
         spawnAfterSignal: spawnAfterSignal,
         changeOnFirstGroupCapture: changeOnFirstGroupCapture,
         failingPID: failingPID,
+        uninspectable: uninspectable,
         naturallyExitGroupAfterFirstPostSignalPoll:
             naturallyExitGroupAfterFirstPostSignalPoll,
         vanishListedPIDAfterFirstPostSignalGroupList:
@@ -609,6 +630,8 @@ private final class LifecycleMutableRuntime: SimulatorMCPCore.ProcessIdentityRea
     private let spawnAfterSignal: [Int32: ProcessIdentitySnapshot]
     private var changeOnFirstGroupCapture: (Int32, ProcessIdentitySnapshot)?
     private let failingPID: Int32?
+    /// Listed by the kernel but not inspectable: the TOCTOU window.
+    private let uninspectable: Set<Int32>
     private let naturallyExitGroupAfterFirstPostSignalPoll: Bool
     private var pendingNaturalGroupExit = false
     private var observedPendingNaturalGroupExit = false
@@ -625,6 +648,7 @@ private final class LifecycleMutableRuntime: SimulatorMCPCore.ProcessIdentityRea
         spawnAfterSignal: [Int32: ProcessIdentitySnapshot],
         changeOnFirstGroupCapture: (Int32, ProcessIdentitySnapshot)?,
         failingPID: Int32?,
+        uninspectable: Set<Int32> = [],
         naturallyExitGroupAfterFirstPostSignalPoll: Bool,
         vanishListedPIDAfterFirstPostSignalGroupList: Int32?,
         movePIDToOtherGroupAfterGroupTERM: Int32?
@@ -636,6 +660,7 @@ private final class LifecycleMutableRuntime: SimulatorMCPCore.ProcessIdentityRea
         self.spawnAfterSignal = spawnAfterSignal
         self.changeOnFirstGroupCapture = changeOnFirstGroupCapture
         self.failingPID = failingPID
+        self.uninspectable = uninspectable
         self.naturallyExitGroupAfterFirstPostSignalPoll =
             naturallyExitGroupAfterFirstPostSignalPoll
         self.vanishListedPIDAfterFirstPostSignalGroupList =
@@ -649,7 +674,7 @@ private final class LifecycleMutableRuntime: SimulatorMCPCore.ProcessIdentityRea
     func waitForKillSignal() async { await killGate.wait() }
 
     func snapshot(pid: Int32) throws -> ProcessIdentitySnapshot? {
-        lock.withLock { snapshots[pid] }
+        lock.withLock { uninspectable.contains(pid) ? nil : snapshots[pid] }
     }
 
     func childPIDs(parentPid: Int32) throws -> [Int32] {
@@ -677,9 +702,12 @@ private final class LifecycleMutableRuntime: SimulatorMCPCore.ProcessIdentityRea
                 changeOnFirstGroupCapture = nil
             }
             if let explicitGroupPIDs { return explicitGroupPIDs }
+            // A dead PID is no longer a group member. Only an already-captured
+            // child list can still name it, which is exactly the race the
+            // descendant walk has to tolerate.
             let pids = snapshots.values
                 .filter { $0.processGroupId == processGroupId }
-                .map(\.pid).sorted()
+                .map(\.pid).filter { !uninspectable.contains($0) }.sorted()
             if pendingNaturalGroupExit {
                 if observedPendingNaturalGroupExit {
                     pendingNaturalGroupExit = false

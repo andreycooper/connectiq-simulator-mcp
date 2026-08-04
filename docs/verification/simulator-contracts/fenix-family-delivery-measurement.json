@@ -1,0 +1,1180 @@
+{
+  "gate": "fenix-family-task-5-delivery-measurement",
+  "capturedOn": "2026-08-03",
+  "macOSVersion": "26.5.2",
+  "method": "real FocusedKeyTransport, simulator control through the installed signed server, delivery read only from fixture FIXTURE_KEY markers with an advancing cursor",
+  "result": {
+    "devices": 19,
+    "combinations": 32,
+    "presses": 160,
+    "delivered": 160,
+    "undelivered": 0,
+    "keyCodes": {
+      "enter": 36,
+      "esc": 53,
+      "up": 126,
+      "down": 125
+    },
+    "keyCodesIdenticalAcrossFamily": true
+  },
+  "gateDStatus": "BLOCKED \u2014 not passed. The published press_button gate aborted on a transient run_app failure (monkeydo_cleanup_failed / process_inspection_failed), not on a delivery failure.",
+  "knownFlake": {
+    "symptom": "kernel-listed owned child PID could not be identity-inspected; sysctl(KERN_PROCARGS2) errno 5",
+    "rate": "4 of 32 combinations in the first measurement pass; all 4 passed on retry",
+    "assessment": "pre-existing race in monkeydo lifecycle inspection, invisible at 2 combinations and surfaced by a 32-combination matrix. It is not caused by this change and must be fixed rather than retried around."
+  },
+  "observations": [
+    {
+      "button": "enter",
+      "delivered": true,
+      "device": "fenix6",
+      "keyCode": 36,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "esc",
+      "delivered": true,
+      "device": "fenix6",
+      "keyCode": 53,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix6",
+      "keyCode": 126,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "down",
+      "delivered": true,
+      "device": "fenix6",
+      "keyCode": 125,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix6",
+      "holdMs": 1000,
+      "keyCode": 126,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "enter",
+      "delivered": true,
+      "device": "fenix6pro",
+      "keyCode": 36,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "esc",
+      "delivered": true,
+      "device": "fenix6pro",
+      "keyCode": 53,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix6pro",
+      "keyCode": 126,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "down",
+      "delivered": true,
+      "device": "fenix6pro",
+      "keyCode": 125,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix6pro",
+      "holdMs": 1000,
+      "keyCode": 126,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "enter",
+      "delivered": true,
+      "device": "fenix6s",
+      "keyCode": 36,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "esc",
+      "delivered": true,
+      "device": "fenix6s",
+      "keyCode": 53,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix6s",
+      "keyCode": 126,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "down",
+      "delivered": true,
+      "device": "fenix6s",
+      "keyCode": 125,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix6s",
+      "holdMs": 1000,
+      "keyCode": 126,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "enter",
+      "delivered": true,
+      "device": "fenix6s",
+      "keyCode": 36,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "esc",
+      "delivered": true,
+      "device": "fenix6s",
+      "keyCode": 53,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix6s",
+      "keyCode": 126,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "down",
+      "delivered": true,
+      "device": "fenix6s",
+      "keyCode": 125,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix6s",
+      "holdMs": 1000,
+      "keyCode": 126,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "enter",
+      "delivered": true,
+      "device": "fenix6spro",
+      "keyCode": 36,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "esc",
+      "delivered": true,
+      "device": "fenix6spro",
+      "keyCode": 53,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix6spro",
+      "keyCode": 126,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "down",
+      "delivered": true,
+      "device": "fenix6spro",
+      "keyCode": 125,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix6spro",
+      "holdMs": 1000,
+      "keyCode": 126,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "enter",
+      "delivered": true,
+      "device": "fenix6spro",
+      "keyCode": 36,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "esc",
+      "delivered": true,
+      "device": "fenix6spro",
+      "keyCode": 53,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix6spro",
+      "keyCode": 126,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "down",
+      "delivered": true,
+      "device": "fenix6spro",
+      "keyCode": 125,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix6spro",
+      "holdMs": 1000,
+      "keyCode": 126,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "enter",
+      "delivered": true,
+      "device": "fenix6xpro",
+      "keyCode": 36,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "esc",
+      "delivered": true,
+      "device": "fenix6xpro",
+      "keyCode": 53,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix6xpro",
+      "keyCode": 126,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "down",
+      "delivered": true,
+      "device": "fenix6xpro",
+      "keyCode": 125,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix6xpro",
+      "holdMs": 1000,
+      "keyCode": 126,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "enter",
+      "delivered": true,
+      "device": "fenix6xpro",
+      "keyCode": 36,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "esc",
+      "delivered": true,
+      "device": "fenix6xpro",
+      "keyCode": 53,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix6xpro",
+      "keyCode": 126,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "down",
+      "delivered": true,
+      "device": "fenix6xpro",
+      "keyCode": 125,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix6xpro",
+      "holdMs": 1000,
+      "keyCode": 126,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "enter",
+      "delivered": true,
+      "device": "fenix7",
+      "keyCode": 36,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "esc",
+      "delivered": true,
+      "device": "fenix7",
+      "keyCode": 53,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix7",
+      "keyCode": 126,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "down",
+      "delivered": true,
+      "device": "fenix7",
+      "keyCode": 125,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix7",
+      "holdMs": 1000,
+      "keyCode": 126,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "enter",
+      "delivered": true,
+      "device": "fenix7pro",
+      "keyCode": 36,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "esc",
+      "delivered": true,
+      "device": "fenix7pro",
+      "keyCode": 53,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix7pro",
+      "keyCode": 126,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "down",
+      "delivered": true,
+      "device": "fenix7pro",
+      "keyCode": 125,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix7pro",
+      "holdMs": 1000,
+      "keyCode": 126,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "enter",
+      "delivered": true,
+      "device": "fenix7pro",
+      "keyCode": 36,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "esc",
+      "delivered": true,
+      "device": "fenix7pro",
+      "keyCode": 53,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix7pro",
+      "keyCode": 126,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "down",
+      "delivered": true,
+      "device": "fenix7pro",
+      "keyCode": 125,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix7pro",
+      "holdMs": 1000,
+      "keyCode": 126,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "enter",
+      "delivered": true,
+      "device": "fenix7pronowifi",
+      "keyCode": 36,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "esc",
+      "delivered": true,
+      "device": "fenix7pronowifi",
+      "keyCode": 53,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix7pronowifi",
+      "keyCode": 126,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "down",
+      "delivered": true,
+      "device": "fenix7pronowifi",
+      "keyCode": 125,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix7pronowifi",
+      "holdMs": 1000,
+      "keyCode": 126,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "enter",
+      "delivered": true,
+      "device": "fenix7pronowifi",
+      "keyCode": 36,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "esc",
+      "delivered": true,
+      "device": "fenix7pronowifi",
+      "keyCode": 53,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix7pronowifi",
+      "keyCode": 126,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "down",
+      "delivered": true,
+      "device": "fenix7pronowifi",
+      "keyCode": 125,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix7pronowifi",
+      "holdMs": 1000,
+      "keyCode": 126,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "enter",
+      "delivered": true,
+      "device": "fenix7s",
+      "keyCode": 36,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "esc",
+      "delivered": true,
+      "device": "fenix7s",
+      "keyCode": 53,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix7s",
+      "keyCode": 126,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "down",
+      "delivered": true,
+      "device": "fenix7s",
+      "keyCode": 125,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix7s",
+      "holdMs": 1000,
+      "keyCode": 126,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "enter",
+      "delivered": true,
+      "device": "fenix7s",
+      "keyCode": 36,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "esc",
+      "delivered": true,
+      "device": "fenix7s",
+      "keyCode": 53,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix7s",
+      "keyCode": 126,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "down",
+      "delivered": true,
+      "device": "fenix7s",
+      "keyCode": 125,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix7s",
+      "holdMs": 1000,
+      "keyCode": 126,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "enter",
+      "delivered": true,
+      "device": "fenix7spro",
+      "keyCode": 36,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "esc",
+      "delivered": true,
+      "device": "fenix7spro",
+      "keyCode": 53,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix7spro",
+      "keyCode": 126,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "down",
+      "delivered": true,
+      "device": "fenix7spro",
+      "keyCode": 125,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix7spro",
+      "holdMs": 1000,
+      "keyCode": 126,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "enter",
+      "delivered": true,
+      "device": "fenix7spro",
+      "keyCode": 36,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "esc",
+      "delivered": true,
+      "device": "fenix7spro",
+      "keyCode": 53,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix7spro",
+      "keyCode": 126,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "down",
+      "delivered": true,
+      "device": "fenix7spro",
+      "keyCode": 125,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix7spro",
+      "holdMs": 1000,
+      "keyCode": 126,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "enter",
+      "delivered": true,
+      "device": "fenix7x",
+      "keyCode": 36,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "esc",
+      "delivered": true,
+      "device": "fenix7x",
+      "keyCode": 53,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix7x",
+      "keyCode": 126,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "down",
+      "delivered": true,
+      "device": "fenix7x",
+      "keyCode": 125,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix7x",
+      "holdMs": 1000,
+      "keyCode": 126,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "enter",
+      "delivered": true,
+      "device": "fenix7xpro",
+      "keyCode": 36,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "esc",
+      "delivered": true,
+      "device": "fenix7xpro",
+      "keyCode": 53,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix7xpro",
+      "keyCode": 126,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "down",
+      "delivered": true,
+      "device": "fenix7xpro",
+      "keyCode": 125,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix7xpro",
+      "holdMs": 1000,
+      "keyCode": 126,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "enter",
+      "delivered": true,
+      "device": "fenix7xpro",
+      "keyCode": 36,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "esc",
+      "delivered": true,
+      "device": "fenix7xpro",
+      "keyCode": 53,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix7xpro",
+      "keyCode": 126,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "down",
+      "delivered": true,
+      "device": "fenix7xpro",
+      "keyCode": 125,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix7xpro",
+      "holdMs": 1000,
+      "keyCode": 126,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "enter",
+      "delivered": true,
+      "device": "fenix7xpronowifi",
+      "keyCode": 36,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "esc",
+      "delivered": true,
+      "device": "fenix7xpronowifi",
+      "keyCode": 53,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix7xpronowifi",
+      "keyCode": 126,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "down",
+      "delivered": true,
+      "device": "fenix7xpronowifi",
+      "keyCode": 125,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix7xpronowifi",
+      "holdMs": 1000,
+      "keyCode": 126,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "enter",
+      "delivered": true,
+      "device": "fenix7xpronowifi",
+      "keyCode": 36,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "esc",
+      "delivered": true,
+      "device": "fenix7xpronowifi",
+      "keyCode": 53,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix7xpronowifi",
+      "keyCode": 126,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "down",
+      "delivered": true,
+      "device": "fenix7xpronowifi",
+      "keyCode": 125,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix7xpronowifi",
+      "holdMs": 1000,
+      "keyCode": 126,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "enter",
+      "delivered": true,
+      "device": "fenix843mm",
+      "keyCode": 36,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "esc",
+      "delivered": true,
+      "device": "fenix843mm",
+      "keyCode": 53,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix843mm",
+      "keyCode": 126,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "down",
+      "delivered": true,
+      "device": "fenix843mm",
+      "keyCode": 125,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix843mm",
+      "holdMs": 1000,
+      "keyCode": 126,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "enter",
+      "delivered": true,
+      "device": "fenix847mm",
+      "keyCode": 36,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "esc",
+      "delivered": true,
+      "device": "fenix847mm",
+      "keyCode": 53,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix847mm",
+      "keyCode": 126,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "down",
+      "delivered": true,
+      "device": "fenix847mm",
+      "keyCode": 125,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix847mm",
+      "holdMs": 1000,
+      "keyCode": 126,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "enter",
+      "delivered": true,
+      "device": "fenix8pro47mm",
+      "keyCode": 36,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "esc",
+      "delivered": true,
+      "device": "fenix8pro47mm",
+      "keyCode": 53,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix8pro47mm",
+      "keyCode": 126,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "down",
+      "delivered": true,
+      "device": "fenix8pro47mm",
+      "keyCode": 125,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix8pro47mm",
+      "holdMs": 1000,
+      "keyCode": 126,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "enter",
+      "delivered": true,
+      "device": "fenix8solar47mm",
+      "keyCode": 36,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "esc",
+      "delivered": true,
+      "device": "fenix8solar47mm",
+      "keyCode": 53,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix8solar47mm",
+      "keyCode": 126,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "down",
+      "delivered": true,
+      "device": "fenix8solar47mm",
+      "keyCode": 125,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix8solar47mm",
+      "holdMs": 1000,
+      "keyCode": 126,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "enter",
+      "delivered": true,
+      "device": "fenix8solar51mm",
+      "keyCode": 36,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "esc",
+      "delivered": true,
+      "device": "fenix8solar51mm",
+      "keyCode": 53,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix8solar51mm",
+      "keyCode": 126,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "down",
+      "delivered": true,
+      "device": "fenix8solar51mm",
+      "keyCode": 125,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix8solar51mm",
+      "holdMs": 1000,
+      "keyCode": 126,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "enter",
+      "delivered": true,
+      "device": "fenixe",
+      "keyCode": 36,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "esc",
+      "delivered": true,
+      "device": "fenixe",
+      "keyCode": 53,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenixe",
+      "keyCode": 126,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "down",
+      "delivered": true,
+      "device": "fenixe",
+      "keyCode": 125,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenixe",
+      "holdMs": 1000,
+      "keyCode": 126,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "enter",
+      "delivered": true,
+      "device": "fenix6",
+      "keyCode": 36,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "esc",
+      "delivered": true,
+      "device": "fenix6",
+      "keyCode": 53,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix6",
+      "keyCode": 126,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "down",
+      "delivered": true,
+      "device": "fenix6",
+      "keyCode": 125,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix6",
+      "holdMs": 1000,
+      "keyCode": 126,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "enter",
+      "delivered": true,
+      "device": "fenix6pro",
+      "keyCode": 36,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "esc",
+      "delivered": true,
+      "device": "fenix6pro",
+      "keyCode": 53,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix6pro",
+      "keyCode": 126,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "down",
+      "delivered": true,
+      "device": "fenix6pro",
+      "keyCode": 125,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix6pro",
+      "holdMs": 1000,
+      "keyCode": 126,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "enter",
+      "delivered": true,
+      "device": "fenix7",
+      "keyCode": 36,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "esc",
+      "delivered": true,
+      "device": "fenix7",
+      "keyCode": 53,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix7",
+      "keyCode": 126,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "down",
+      "delivered": true,
+      "device": "fenix7",
+      "keyCode": 125,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix7",
+      "holdMs": 1000,
+      "keyCode": 126,
+      "sdk": "8.4.1"
+    },
+    {
+      "button": "enter",
+      "delivered": true,
+      "device": "fenix7x",
+      "keyCode": 36,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "esc",
+      "delivered": true,
+      "device": "fenix7x",
+      "keyCode": 53,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix7x",
+      "keyCode": 126,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "down",
+      "delivered": true,
+      "device": "fenix7x",
+      "keyCode": 125,
+      "sdk": "9.1.0"
+    },
+    {
+      "button": "up",
+      "delivered": true,
+      "device": "fenix7x",
+      "holdMs": 1000,
+      "keyCode": 126,
+      "sdk": "9.1.0"
+    }
+  ]
+}

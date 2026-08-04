@@ -242,23 +242,39 @@ public struct InputCapability: Equatable, Sendable {
 /// Immutable, exact-match capability data. This registry is private to the
 /// qualification composition; v1 PublicToolServices remains fail-closed.
 public struct InputCapabilityRegistry: Sendable {
-    private let device: String
-    private let sdkVersions: Set<String>
-    private let capabilityValue: InputCapability
+    private struct Entry: Sendable {
+        let sdkVersions: Set<String>
+        let capability: InputCapability
+    }
+    private let entries: [String: Entry]
 
-    public init(_ qualified: QualifiedInputProfile) throws {
-        let profile = qualified.profile
-        guard profile.core.qualification else {
-            throw InputProfileValidationError.malformed("profile is not a qualification profile")
+    public init(_ qualified: QualifiedInputProfile) throws { try self.init([qualified]) }
+
+    /// Keyed by exact device id. Two profiles claiming the same device are a
+    /// load failure rather than a last-one-wins overwrite: a partially loaded
+    /// allowlist is worse than none.
+    public init(_ qualified: [QualifiedInputProfile]) throws {
+        var entries: [String: Entry] = [:]
+        for candidate in qualified {
+            let profile = candidate.profile
+            guard profile.core.qualification else {
+                throw InputProfileValidationError.malformed("profile is not a qualification profile")
+            }
+            guard entries[profile.core.device] == nil else {
+                throw InputProfileValidationError.malformed(
+                    "duplicate qualification profile for device \(profile.core.device)")
+            }
+            entries[profile.core.device] = Entry(
+                sdkVersions: Set(profile.transport.sdkEntries.keys),
+                capability: InputCapability(
+                    buttons: profile.core.buttonOrder, profile: profile.core.profileVersion))
         }
-        device = profile.core.device
-        sdkVersions = Set(profile.transport.sdkEntries.keys)
-        capabilityValue = InputCapability(buttons: profile.core.buttonOrder, profile: profile.core.profileVersion)
+        self.entries = entries
     }
 
     public func capability(device: String, sdkVersion: String) -> InputCapability? {
-        guard device == self.device, sdkVersions.contains(sdkVersion) else { return nil }
-        return capabilityValue
+        guard let entry = entries[device], entry.sdkVersions.contains(sdkVersion) else { return nil }
+        return entry.capability
     }
 }
 
@@ -277,12 +293,37 @@ public enum InputProfileLoader {
         try decodeQualification(qualificationCandidateData())
     }
 
-    public static func decodeQualification(_ data: Data) throws -> QualifiedInputProfile {
+    /// Every shipped profile resource, validated. The set of devices they
+    /// declare must equal `qualifiedDevices` exactly: a missing resource and an
+    /// unlisted extra one are both load failures, so capability is never a
+    /// filesystem side effect.
+    public static func loadQualificationCandidates() throws -> [QualifiedInputProfile] {
+        guard let directory = Bundle.module.url(
+            forResource: "InputProfiles", withExtension: nil, subdirectory: "Resources")
+        else {
+            throw InputProfileValidationError.malformed("qualification profile directory is missing")
+        }
+        let files = try FileManager.default
+            .contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+            .filter { $0.lastPathComponent.hasSuffix("-input.json") }
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+
+        let profiles = try files.map { try decodeQualification(try Data(contentsOf: $0)) }
+        guard Set(profiles.map { $0.profile.core.device }) == qualifiedDevices else {
+            throw InputProfileValidationError.malformed(
+                "shipped profile resources do not match the qualified device set")
+        }
+        return profiles
+    }
+
+    public static func decodeQualification(
+        _ data: Data, allowing devices: Set<String>? = nil
+    ) throws -> QualifiedInputProfile {
         do {
             let raw = try JSONSerialization.jsonObject(with: data)
             try validateShape(raw)
             let profile = try JSONDecoder().decode(InputProfile.self, from: data)
-            let predicate = try validateSemantics(profile)
+            let predicate = try validateSemantics(profile, allowing: devices ?? qualifiedDevices)
             return QualifiedInputProfile(profile: profile, keyboardLayoutPredicate: predicate)
         } catch let error as InputProfileValidationError {
             throw error
@@ -311,7 +352,9 @@ public enum InputProfileLoader {
             throw malformed("focused transport must leave Simulator frontmost")
         }
         let entries = try dictionary(transport["sdkEntries"])
-        guard Set(entries.keys) == ["8.4.1", "9.1.0"] else { throw malformed("SDK allowlist mismatch") }
+        guard !entries.isEmpty, Set(entries.keys).isSubset(of: recognisedSdkVersions) else {
+            throw malformed("SDK allowlist mismatch")
+        }
         for value in entries.values {
             let buttons = try dictionary(value)
             guard Set(buttons.keys) == ["enter", "esc", "up", "down"] else {
@@ -321,32 +364,110 @@ public enum InputProfileLoader {
         }
     }
 
-    private static func validateSemantics(_ profile: InputProfile) throws -> KeyboardLayoutPredicate {
-        let expectedCodes = ["enter": 36, "esc": 53, "up": 126, "down": 125]
+    /// SDK versions this server has a verified transport story for. A profile
+    /// may declare any non-empty subset: fēnix 8 and fēnix E need API level
+    /// 6.0.0, which 8.4.1 cannot compile, so they are single-SDK by necessity.
+    /// Coverage is per profile; the set of *recognised* versions is not.
+    private static let recognisedSdkVersions: Set<String> = ["8.4.1", "9.1.0"]
+
+    /// A1. Capability is an explicit allowlist keyed by exact device id, and it
+    /// lives here rather than in the resource directory. A device joins it only
+    /// after its own delivery gate has passed, and adding one costs a Swift
+    /// edit on purpose: a wrong literal breaks the build, a wrong JSON file
+    /// would be silently accepted.
+    static let qualifiedDevices: Set<String> = [
+        "fenix6",
+        "fenix6pro",
+        "fenix6s",
+        "fenix6spro",
+        "fenix6xpro",
+        "fenix7",
+        "fenix7pro",
+        "fenix7pronowifi",
+        "fenix7s",
+        "fenix7spro",
+        "fenix7x",
+        "fenix7xpro",
+        "fenix7xpronowifi",
+        "fenix843mm",
+        "fenix847mm",
+        "fenix8pro47mm",
+        "fenix8solar47mm",
+        "fenix8solar51mm",
+        "fenixe",
+    ]
+
+    /// A2. The layout group's key mapping AND the device-to-group assignment
+    /// are both compiled in. A profile's `sdkEntries` must equal the group's
+    /// mapping exactly, which is what catches a transposed mapping — every
+    /// permutation of the permitted codes is still four permitted codes, so a
+    /// membership test cannot.
+    enum LayoutGroup: Hashable {
+        /// fēnix 6/7/8/E: five physical keys, `menu` being a hold of `up`.
+        case fenixPhysicalKeys
+    }
+
+    struct LayoutProfile: Sendable {
+        let buttonOrder: [String]
+        let keyCodes: [String: Int]
+    }
+
+    static let layoutGroups: [LayoutGroup: LayoutProfile] = [
+        .fenixPhysicalKeys: LayoutProfile(
+            buttonOrder: ["enter", "esc", "up", "down"],
+            keyCodes: ["enter": 36, "esc": 53, "up": 126, "down": 125])
+    ]
+
+    static let deviceLayoutGroups: [String: LayoutGroup] = Dictionary(
+        uniqueKeysWithValues: qualifiedDevices.map { ($0, LayoutGroup.fenixPhysicalKeys) })
+
+    /// A3. The permitted virtual key codes. Retained as a blast-radius bound on
+    /// what this process may post into a focused foreground application — NOT
+    /// as evidence of qualification. A2 carries the evidence.
+    private static let permittedKeyCodes: Set<Int> = [36, 53, 126, 125]
+
+    private static func validateSemantics(
+        _ profile: InputProfile, allowing devices: Set<String>
+    ) throws -> KeyboardLayoutPredicate {
+        let declaredSdks = Set(profile.transport.sdkEntries.keys)
+        guard devices.contains(profile.core.device) else {
+            throw malformed("device is not in the qualified device set")
+        }
+        // A test may widen the allowlist; it may not invent a layout group.
+        let group = deviceLayoutGroups[profile.core.device] ?? .fenixPhysicalKeys
+        guard let layout = layoutGroups[group] else { throw malformed("unknown layout group") }
+        let expectedCodes = layout.keyCodes
+        guard Set(expectedCodes.values).isSubset(of: permittedKeyCodes) else {
+            throw malformed("layout group uses a key code outside the permitted set")
+        }
         let approvedDigests = [
             "garmin-community-keyboard-shortcuts": "d6ed40565ca4e7d116cac01bac256ff27af64385a4eff30cb7c7806b38f6c7ab",
             "apple-hitoolbox-release-notes": "a47905d4f43b6ecf5f7f24465777870849e578c19d4d9d738f4a84fff08d32c1",
             "preserved-hitoolbox-events-header": "f0c475dbc4500f6f4d867fb224d29b18596a9d8880fabf1ba4fd9cfc84eafac0",
         ]
         guard profile.core.schemaVersion == 2,
-              profile.core.device == "fenix6xpro",
-              profile.core.profileVersion == "fenix6xpro-verified/3",
+              profile.core.profileVersion == "\(profile.core.device)-verified/3",
               profile.core.qualification,
-              profile.core.buttonOrder == ["enter", "esc", "up", "down"],
+              profile.core.buttonOrder == layout.buttonOrder,
               profile.core.holdEncoding == HoldEncoding(
                   mechanism: "down-up", fixtureThresholdMs: 300, gateHoldMs: 1000,
                   minimumPressMs: 50),
-              profile.core.evidence.sdks == ["8.4.1", "9.1.0"],
+              !declaredSdks.isEmpty,
+              declaredSdks.isSubset(of: recognisedSdkVersions),
+              Set(profile.core.evidence.sdks) == declaredSdks,
+              Set(profile.core.evidence.gateTranscriptDigests.keys) == declaredSdks,
               profile.core.evidence.macOSVersion == "26.5.2",
               profile.core.evidence.surfaceDigests == approvedDigests,
-              profile.core.evidence.gateTranscriptDigests == ["8.4.1": "", "9.1.0": ""],
               profile.transport.kind == .focusedKeys
         else { throw malformed("qualification profile semantic mismatch") }
-        for sdk in ["8.4.1", "9.1.0"] {
+        // A2: equality, not membership. A transposed mapping is still four
+        // permitted codes, so only equality against the compiled-in layout
+        // group rejects it.
+        let expectedEntry = Dictionary(
+            uniqueKeysWithValues: expectedCodes.map { ($0, ["keyCode": JSONValue.int($1)]) })
+        for sdk in declaredSdks {
             guard let entry = profile.transport.sdkEntries[sdk] else { throw malformed("SDK entry missing") }
-            for (button, code) in expectedCodes where entry[button] != ["keyCode": .int(code)] {
-                throw malformed("key mapping mismatch")
-            }
+            guard entry == expectedEntry else { throw malformed("key mapping mismatch") }
         }
         let predicate = KeyboardLayoutPredicate(
             inputSourceID: "com.apple.keylayout.US", requiresEnabled: true)
@@ -410,10 +531,16 @@ public struct ButtonOperationRunner: Sendable {
 }
 
 public struct ButtonInputService: Sendable {
-    private let profile: InputProfile
-    private let transports: [any ButtonPressing]
+    /// Keyed by exact device id. A device with no entry is refused, so the
+    /// service cannot post a mapping belonging to a different device.
+    private let profiles: [String: InputProfile]
+    private let transports: [String: [any ButtonPressing]]
     private let runner: ButtonOperationRunner
     private let clock: any Clock<Duration>
+    /// Only used to phrase the unknown-button message; every in-scope device
+    /// shares one button order today.
+    private let advertisedButtons: [String]
+
     public init(profile: InputProfile, transports: [any ButtonPressing], operationRunner: ButtonOperationRunner) {
         self.init(profile: profile, transports: transports, operationRunner: operationRunner, clock: ContinuousClock())
     }
@@ -421,23 +548,45 @@ public struct ButtonInputService: Sendable {
         self.init(profile: profile, transports: [transport], operationRunner: operationRunner)
     }
     public init(profile: InputProfile, transports: [any ButtonPressing], operationRunner: ButtonOperationRunner, clock: any Clock<Duration>) {
-        self.profile = profile; self.transports = transports; self.runner = operationRunner; self.clock = clock
+        self.init(devices: [(profile, transports)], operationRunner: operationRunner, clock: clock)
+    }
+    public init(
+        devices: [(profile: InputProfile, transports: [any ButtonPressing])],
+        operationRunner: ButtonOperationRunner, clock: any Clock<Duration> = ContinuousClock()
+    ) {
+        var profiles: [String: InputProfile] = [:]
+        var transports: [String: [any ButtonPressing]] = [:]
+        for (profile, deviceTransports) in devices {
+            profiles[profile.core.device] = profile
+            transports[profile.core.device] = deviceTransports
+        }
+        self.profiles = profiles
+        self.transports = transports
+        self.runner = operationRunner
+        self.clock = clock
+        self.advertisedButtons = devices.min { $0.profile.core.device < $1.profile.core.device }?
+            .profile.core.buttonOrder ?? []
     }
     public func press(_ request: PressButtonToolRequest) async throws -> PressButtonResult {
-        guard profile.core.buttonOrder.contains(request.button) else {
-            throw invalidArguments("Unknown button '\(request.button)'.", fix: "Use one of: \(profile.core.buttonOrder.joined(separator: ", ")).")
+        guard advertisedButtons.contains(request.button) else {
+            throw invalidArguments("Unknown button '\(request.button)'.", fix: "Use one of: \(advertisedButtons.joined(separator: ", ")).")
         }
         if let hold = request.holdMs, !(50...5000).contains(hold) {
             throw invalidArguments("holdMs must be between 50 and 5000 milliseconds.", fix: "Omit holdMs for a press or pass a value from 50 through 5000.")
         }
         return try await runner.run(.pressButton, requirement: .currentReady) { context in
             guard let device = context.currentDevice else { throw noCurrentDevice() }
-            guard device == profile.core.device else { throw inputUnsupported("No verified input profile exists for device \(device).") }
+            guard let profile = profiles[device], let deviceTransports = transports[device] else {
+                throw inputUnsupported("No verified input profile exists for device \(device).")
+            }
+            guard profile.core.buttonOrder.contains(request.button) else {
+                throw inputUnsupported("Button \(request.button) is not verified for device \(device).", fix: "Use one of: \(profile.core.buttonOrder.joined(separator: ", ")).")
+            }
             guard let sdkEntry = profile.transport.sdkEntries[context.sdk.version.description] else {
                 throw inputUnsupported("No verified input mapping exists for SDK \(context.sdk.version.description); verified SDKs are \(profile.transport.sdkEntries.keys.sorted().joined(separator: ", ")).", fix: "Use one of the verified SDK versions listed in the message.")
             }
             guard sdkEntry[request.button] != nil else { throw inputUnsupported("No verified input mapping exists for button \(request.button) on SDK \(context.sdk.version.description).", fix: "Use a button with a verified mapping for this SDK.") }
-            guard let transport = transports.first(where: { $0.kind == profile.transport.kind }) else { throw inputUnsupported("The verified input transport is unavailable.", fix: "Use a supported transport or restart the simulator.") }
+            guard let transport = deviceTransports.first(where: { $0.kind == profile.transport.kind }) else { throw inputUnsupported("The verified input transport is unavailable.", fix: "Use a supported transport or restart the simulator.") }
             if transport.requiresFocusOptIn && !request.allowFocus { throw focusRequired() }
             do {
                 try await ClockSupport.withDeadline(.seconds(10) + .milliseconds(request.holdMs ?? 0), clock: clock) {
@@ -506,7 +655,7 @@ public struct ButtonInputService: Sendable {
         ToolError(
             code: "input_delivery_failed",
             message: "The input transport could not deliver the button.",
-            fix: "sim_stop -> sim_start(activate=true) -> run_app -> press_button(allowFocus=true)")
+            fix: "sim_stop -> sim_start -> run_app -> press_button(allowFocus=true)")
     }
 
     private func deliveryFailure() -> ToolError {

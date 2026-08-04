@@ -423,6 +423,15 @@ struct InstalledServerIntegrationTests {
     }
 }
 
+/// Per-combination progress for the delivery gate, on stderr.
+///
+/// Without it a failure names no device and no SDK, and elapsed time is the
+/// only signal — which the standing rule correctly refuses to read as progress.
+/// With it, "FAILED after 26/32" is a counted result.
+func gateProgress(_ message: String) {
+    FileHandle.standardError.write(Data("gateD: \(message)\n".utf8))
+}
+
 @Suite("Installed button delivery", .enabled(if: integrationEnabled), .serialized)
 struct InstalledButtonDeliveryIntegrationTests {
     /// Drives the published surface end to end on both verified SDKs. Delivery
@@ -442,7 +451,17 @@ struct InstalledButtonDeliveryIntegrationTests {
             ($0.version.description, $0)
         })
 
-        for sdkVersion in ["8.4.1", "9.1.0"] {
+        // Driven by the shipped profiles, so a device cannot reach the
+        // allowlist without a gate case existing for it, and its declared SDK
+        // set is the one actually exercised.
+        let candidates = try InputProfileLoader.loadQualificationCandidates()
+        let combinations = candidates.reduce(0) { $0 + $1.profile.transport.sdkEntries.count }
+        var completed = 0
+        gateProgress("matrix: \(candidates.count) devices, \(combinations) combinations")
+        for qualified in candidates {
+          let device = qualified.profile.core.device
+          let buttonOrder = qualified.profile.core.buttonOrder
+          for sdkVersion in qualified.profile.transport.sdkEntries.keys.sorted() {
             let sdk = try #require(installed[sdkVersion], "Required SDK \(sdkVersion) is not installed")
             let client = InstalledServerClient(executableURL: executable)
             do {
@@ -453,11 +472,17 @@ struct InstalledButtonDeliveryIntegrationTests {
                     try await client.callTool(
                         "list_devices", arguments: ["sdk": .string(sdk.root.path)],
                         as: ListDevicesResult.self), tool: "list_devices")
-                let fenix = try #require(devices.devices.first { $0.deviceId == "fenix6xpro" })
-                #expect(fenix.inputSupported)
-                #expect(fenix.buttons == ["enter", "esc", "up", "down"])
+                let advertised = try #require(devices.devices.first { $0.deviceId == device })
+                #expect(advertised.inputSupported)
+                #expect(advertised.buttons == buttonOrder)
 
                 _ = try await client.callTool("sim_stop", as: SimStopResult.self)
+                // Across a 32-combination matrix the previous launcher group is
+                // still draining when the next launch begins, and group cleanup
+                // fails closed on membership churn by design. Wait on the
+                // observed state rather than on elapsed time: a sleep would
+                // prove nothing about whether the tree is actually gone.
+                try await waitForSimulatorStopped(client, deadline: .seconds(30))
                 _ = try requireSuccess(
                     try await client.callTool(
                         "sim_start", arguments: ["sdk": .string(sdk.root.path)],
@@ -467,7 +492,7 @@ struct InstalledButtonDeliveryIntegrationTests {
                         "run_app",
                         arguments: [
                             "projectPath": .string(fixture.path),
-                            "device": .string("fenix6xpro"),
+                            "device": .string(device),
                             "sdk": .string(sdk.root.path),
                             "developerKey": .string(developerKey),
                         ], as: RunAppResult.self), tool: "run_app")
@@ -476,13 +501,13 @@ struct InstalledButtonDeliveryIntegrationTests {
                 let started = try await reader.wait(for: "FIXTURE_STARTED", timeout: .seconds(60))
                 #expect(started, Comment(rawValue: "SDK \(sdkVersion): no FIXTURE_STARTED"))
 
-                for (button, hold, marker) in [
-                    ("enter", nil, "FIXTURE_KEY enter PRESS"),
-                    ("esc", nil, "FIXTURE_KEY esc PRESS"),
-                    ("up", nil, "FIXTURE_KEY up PRESS"),
-                    ("down", nil, "FIXTURE_KEY down PRESS"),
-                    ("up", 1_000, "FIXTURE_KEY up HOLD"),
-                ] as [(String, Int?, String)] {
+                var cases: [(String, Int?, String)] = buttonOrder.map {
+                    ($0, nil, "FIXTURE_KEY \($0) PRESS")
+                }
+                if buttonOrder.contains("up") {
+                    cases.append(("up", 1_000, "FIXTURE_KEY up HOLD"))
+                }
+                for (button, hold, marker) in cases {
                     var arguments: [String: JSONValue] = [
                         "button": .string(button), "allowFocus": true,
                     ]
@@ -494,7 +519,7 @@ struct InstalledButtonDeliveryIntegrationTests {
                     #expect(press.button == button)
                     #expect(press.pressType == ((hold ?? 0) >= 300 ? "hold" : "press"))
                     let seen = try await reader.wait(for: marker, timeout: .seconds(15))
-                    #expect(seen, Comment(rawValue: "SDK \(sdkVersion): \(button) "
+                    #expect(seen, Comment(rawValue: "\(device) on \(sdkVersion): \(button) "
                         + "hold=\(hold.map(String.init) ?? "none") produced no \(marker)"))
                 }
 
@@ -525,11 +550,16 @@ struct InstalledButtonDeliveryIntegrationTests {
 
                 _ = try await client.callTool("sim_stop", as: SimStopResult.self)
                 #expect(await client.stop())
+                completed += 1
+                gateProgress("ok \(completed)/\(combinations) \(device) sdk \(sdkVersion)")
             } catch {
+                gateProgress(
+                    "FAILED after \(completed)/\(combinations) on \(device) sdk \(sdkVersion)")
                 _ = try? await client.callTool("sim_stop", as: SimStopResult.self)
                 _ = await client.stop()
                 throw error
             }
+          }
         }
     }
 
@@ -824,4 +854,21 @@ private func requireSuccess<Result: Codable & Sendable>(
             "\(tool) failed [\(code)]: \(message). Fix: \(fix)\(details)")
     }
     return result
+}
+
+/// Polls sim_status until the simulator reports it is no longer running, so a
+/// following launch cannot race the previous tree's teardown.
+private func waitForSimulatorStopped(
+    _ client: InstalledServerClient, deadline: Duration
+) async throws {
+    let clock = ContinuousClock()
+    let limit = clock.now.advanced(by: deadline)
+    while clock.now < limit {
+        let status = try requireSuccess(
+            try await client.callTool("sim_status", as: SimStatusResult.self), tool: "sim_status")
+        if status.state == .notRunning { return }
+        try await Task.sleep(for: .milliseconds(200))
+    }
+    throw InstalledIntegrationError(
+        "the simulator did not reach not_running within \(deadline)")
 }

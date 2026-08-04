@@ -1,0 +1,118 @@
+{
+  "gate": "fenix-family-task-3-build-matrix",
+  "capturedOn": "2026-08-03",
+  "macOSVersion": "26.5.2",
+  "question": "Which in-scope fenix profiles can the fixture be compiled for, on which installed SDK?",
+  "method": "monkeyc invoked directly per device per SDK, exit status checked; no pipes.",
+  "fixture": "Tests/fixtures/testapp (19 declared iq:product entries)",
+  "result": {
+    "devices": 19,
+    "combinations": 38,
+    "succeeded": 32,
+    "bothSdks": [
+      "fenix6",
+      "fenix6pro",
+      "fenix6s",
+      "fenix6spro",
+      "fenix6xpro",
+      "fenix7",
+      "fenix7pro",
+      "fenix7pronowifi",
+      "fenix7s",
+      "fenix7spro",
+      "fenix7x",
+      "fenix7xpro",
+      "fenix7xpronowifi"
+    ],
+    "sdk910Only": [
+      "fenix843mm",
+      "fenix847mm",
+      "fenix8pro47mm",
+      "fenix8solar47mm",
+      "fenix8solar51mm",
+      "fenixe"
+    ],
+    "neither": [],
+    "gateB": "pass"
+  },
+  "sdk841Refusal": "ERROR: Device '<id>' requires API Level '6.0.0'. The current SDK supports up to API Level '5.2.0'.",
+  "matchesDesignTable": true,
+  "matrix": {
+    "fenix6": {
+      "8.4.1": "OK",
+      "9.1.0": "OK"
+    },
+    "fenix6pro": {
+      "8.4.1": "OK",
+      "9.1.0": "OK"
+    },
+    "fenix6s": {
+      "8.4.1": "OK",
+      "9.1.0": "OK"
+    },
+    "fenix6spro": {
+      "8.4.1": "OK",
+      "9.1.0": "OK"
+    },
+    "fenix6xpro": {
+      "8.4.1": "OK",
+      "9.1.0": "OK"
+    },
+    "fenix7": {
+      "8.4.1": "OK",
+      "9.1.0": "OK"
+    },
+    "fenix7pro": {
+      "8.4.1": "OK",
+      "9.1.0": "OK"
+    },
+    "fenix7pronowifi": {
+      "8.4.1": "OK",
+      "9.1.0": "OK"
+    },
+    "fenix7s": {
+      "8.4.1": "OK",
+      "9.1.0": "OK"
+    },
+    "fenix7spro": {
+      "8.4.1": "OK",
+      "9.1.0": "OK"
+    },
+    "fenix7x": {
+      "8.4.1": "OK",
+      "9.1.0": "OK"
+    },
+    "fenix7xpro": {
+      "8.4.1": "OK",
+      "9.1.0": "OK"
+    },
+    "fenix7xpronowifi": {
+      "8.4.1": "OK",
+      "9.1.0": "OK"
+    },
+    "fenix843mm": {
+      "8.4.1": "FAIL",
+      "9.1.0": "OK"
+    },
+    "fenix847mm": {
+      "8.4.1": "FAIL",
+      "9.1.0": "OK"
+    },
+    "fenix8pro47mm": {
+      "8.4.1": "FAIL",
+      "9.1.0": "OK"
+    },
+    "fenix8solar47mm": {
+      "8.4.1": "FAIL",
+      "9.1.0": "OK"
+    },
+    "fenix8solar51mm": {
+      "8.4.1": "FAIL",
+      "9.1.0": "OK"
+    },
+    "fenixe": {
+      "8.4.1": "FAIL",
+      "9.1.0": "OK"
+    }
+  }
+}

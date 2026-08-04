@@ -5,16 +5,14 @@
     "up",
     "down"
   ],
-  "device": "fenix6xpro",
+  "device": "fenixe",
   "evidence": {
-    "capturedOn": "2026-07-19",
+    "capturedOn": "2026-08-03",
     "gateTranscriptDigests": {
-      "8.4.1": "",
       "9.1.0": ""
     },
     "macOSVersion": "26.5.2",
     "sdks": [
-      "8.4.1",
       "9.1.0"
     ],
     "surfaceDigests": {
@@ -29,7 +27,7 @@
     "mechanism": "down-up",
     "minimumPressMs": 50
   },
-  "profileVersion": "fenix6xpro-verified/3",
+  "profileVersion": "fenixe-verified/3",
   "qualification": true,
   "schemaVersion": 2,
   "transport": "focused-keys",
@@ -43,20 +41,6 @@
     },
     "leavesSimulatorFrontmost": true,
     "sdkEntries": {
-      "8.4.1": {
-        "down": {
-          "keyCode": 125
-        },
-        "enter": {
-          "keyCode": 36
-        },
-        "esc": {
-          "keyCode": 53
-        },
-        "up": {
-          "keyCode": 126
-        }
-      },
       "9.1.0": {
         "down": {
           "keyCode": 125

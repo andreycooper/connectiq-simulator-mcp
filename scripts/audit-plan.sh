@@ -71,6 +71,15 @@ check_absent \
     "$handler_platform_apis" \
     Sources/SimulatorMCPCore/MCP/ToolHandlers.swift
 
+# Every compiled-in qualified device must have both a shipped profile resource
+# and its own measured delivery contract, and the two must agree on the SDK set.
+# Fail-closed in both directions: a device without evidence, and evidence
+# without a compiled-in device, are each a failure. Capability is never a
+# filesystem side effect.
+if ! python3 scripts/audit-input-profiles.py; then
+    failed=1
+fi
+
 if [ "$failed" -ne 0 ]; then
     exit 1
 fi

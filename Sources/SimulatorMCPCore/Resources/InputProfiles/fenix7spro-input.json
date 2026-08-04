@@ -5,9 +5,9 @@
     "up",
     "down"
   ],
-  "device": "fenix6xpro",
+  "device": "fenix7spro",
   "evidence": {
-    "capturedOn": "2026-07-19",
+    "capturedOn": "2026-08-03",
     "gateTranscriptDigests": {
       "8.4.1": "",
       "9.1.0": ""
@@ -29,7 +29,7 @@
     "mechanism": "down-up",
     "minimumPressMs": 50
   },
-  "profileVersion": "fenix6xpro-verified/3",
+  "profileVersion": "fenix7spro-verified/3",
   "qualification": true,
   "schemaVersion": 2,
   "transport": "focused-keys",

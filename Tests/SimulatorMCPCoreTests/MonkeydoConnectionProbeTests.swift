@@ -220,21 +220,50 @@ struct MonkeydoConnectionProbeTests {
         #expect(clock.pendingSleepCount == 0)
     }
 
-    @Test("a kernel-listed child that cannot be inspected fails closed before lsof")
-    func uninspectableListedChildFailsClosed() async {
+    /// A process leaves its process group when it is REAPED, not when it dies.
+    /// Measured against the kernel: a killed, unreaped process stays listed
+    /// in both the child list and the group list while
+    /// being uninspectable. So an uninspectable member is an ordinary zombie,
+    /// and the probe — which signals nothing — must not abort on one.
+    @Test("a zombie descendant does not abort the probe")
+    func zombieDescendantDoesNotAbortTheProbe() async throws {
         let fixture = ownedProbeFixture()
         var children = fixture.reader.children
         children[100] = [101, 999]
         let reader = ProbeIdentityReader(
             snapshots: fixture.reader.snapshots,
             children: children,
-            groups: fixture.reader.groups)
-        let runner = FakeProcessRunner { _ in
-            Issue.record("lsof must not run after incomplete process enumeration")
-            return (0, Data(), Data())
-        }
+            groups: [100: [100, 101, 102, 999]])
         let probe = MonkeydoConnectionProbe(
-            processRunner: runner, identityReader: reader, clock: FakeClock(), serverPID: 500)
+            processRunner: matchingShellRunner(), identityReader: reader,
+            clock: FakeClock(), serverPID: 500)
+
+        let verified = try await probe.waitUntilConnected(
+            owned: fixture.owned,
+            listeningEndpoints: fixture.listeners,
+            timeout: .seconds(1))
+        #expect(verified.localEndpoint.port == 52100)
+        #expect(verified.remoteEndpoint.port == 1234)
+    }
+
+    /// The guard the inverted test was providing: tolerating a vanished child
+    /// must not tolerate a live one that is not ours.
+    @Test("a listed child that is inspectable but not ours still fails closed")
+    func foreignListedChildFailsClosed() async {
+        let fixture = ownedProbeFixture()
+        var snapshots = fixture.reader.snapshots
+        // Inspectable, alive, in our group — but its parent is not the launcher.
+        snapshots[998] = probeSnapshot(
+            pid: 998, parent: 1, group: 100, executable: "/usr/bin/foreign",
+            arguments: ["/usr/bin/foreign"])
+        var children = fixture.reader.children
+        children[100] = [101, 998]
+        let reader = ProbeIdentityReader(
+            snapshots: snapshots, children: children,
+            groups: [100: [100, 101, 102, 998]])
+        let probe = MonkeydoConnectionProbe(
+            processRunner: matchingShellRunner(), identityReader: reader,
+            clock: FakeClock(), serverPID: 500)
 
         await expectProbeFailure {
             try await probe.waitUntilConnected(
@@ -242,19 +271,44 @@ struct MonkeydoConnectionProbeTests {
                 listeningEndpoints: fixture.listeners,
                 timeout: .seconds(1))
         }
-        #expect(runner.invocations.isEmpty)
     }
 
-    @Test("an uninspectable launcher-group member fails closed after fresh socket proof")
-    func uninspectableGroupMemberFailsClosed() async {
+    @Test("a zombie launcher-group member does not abort the probe")
+    func zombieGroupMemberDoesNotAbortTheProbe() async throws {
         let fixture = ownedProbeFixture()
         let reader = ProbeIdentityReader(
             snapshots: fixture.reader.snapshots,
             children: fixture.reader.children,
             groups: [100: [100, 101, 102, 999]])
-        let runner = matchingShellRunner()
         let probe = MonkeydoConnectionProbe(
-            processRunner: runner, identityReader: reader, clock: FakeClock(), serverPID: 500)
+            processRunner: matchingShellRunner(), identityReader: reader,
+            clock: FakeClock(), serverPID: 500)
+
+        let verified = try await probe.waitUntilConnected(
+            owned: fixture.owned,
+            listeningEndpoints: fixture.listeners,
+            timeout: .seconds(1))
+        #expect(verified.localEndpoint.port == 52100)
+        #expect(verified.remoteEndpoint.port == 1234)
+    }
+
+    /// The guard the inverted test was providing: a live group member that is
+    /// not in our tree is a foreign process, which is exactly what the
+    /// anchoring requirement exists to catch.
+    @Test("a live launcher-group member outside the owned tree still fails closed")
+    func foreignGroupMemberFailsClosed() async {
+        let fixture = ownedProbeFixture()
+        var snapshots = fixture.reader.snapshots
+        snapshots[997] = probeSnapshot(
+            pid: 997, parent: 1, group: 100, executable: "/usr/bin/foreign",
+            arguments: ["/usr/bin/foreign"])
+        let reader = ProbeIdentityReader(
+            snapshots: snapshots,
+            children: fixture.reader.children,
+            groups: [100: [100, 101, 102, 997]])
+        let probe = MonkeydoConnectionProbe(
+            processRunner: matchingShellRunner(), identityReader: reader,
+            clock: FakeClock(), serverPID: 500)
 
         await expectProbeFailure {
             try await probe.waitUntilConnected(
@@ -262,7 +316,61 @@ struct MonkeydoConnectionProbeTests {
                 listeningEndpoints: fixture.listeners,
                 timeout: .seconds(1))
         }
-        #expect(runner.invocations.count == 2)
+    }
+
+    /// The tree is captured before the group, so a descendant reaped in between
+    /// is legitimately in one and not the other. Exact dictionary equality
+    /// cannot express that, and failed on it.
+    @Test("a descendant reaped between the tree and group captures does not abort")
+    func descendantReapedBetweenCapturesDoesNotAbort() async throws {
+        let fixture = ownedProbeFixture()
+        let helper = probeSnapshot(
+            pid: 103, parent: 100, group: 100, executable: "/bin/dirname",
+            arguments: ["/bin/dirname", "/SDK With Spaces/bin/monkeydo"])
+        var children = fixture.reader.children
+        children[100] = [101, 103]
+        // Inspectable for both tree captures, then gone: 103 is absent from the
+        // group listing because it was reaped before the group was captured.
+        let reader = SequencedProbeIdentityReader(
+            snapshots: fixture.reader.snapshots,
+            sequences: [103: [helper, helper]],
+            children: children,
+            groups: [100: [100, 101, 102]])
+        let probe = MonkeydoConnectionProbe(
+            processRunner: matchingShellRunner(), identityReader: reader,
+            clock: FakeClock(), serverPID: 500)
+
+        let verified = try await probe.waitUntilConnected(
+            owned: fixture.owned,
+            listeningEndpoints: fixture.listeners,
+            timeout: .seconds(1))
+        #expect(verified.localEndpoint.port == 52100)
+        #expect(verified.remoteEndpoint.port == 1234)
+    }
+
+    /// ...but a descendant that left the group while still ALIVE is fatal.
+    @Test("a descendant that leaves the launcher group while alive fails closed")
+    func liveDescendantOutsideGroupFailsClosed() async {
+        let fixture = ownedProbeFixture()
+        var snapshots = fixture.reader.snapshots
+        snapshots[103] = probeSnapshot(
+            pid: 103, parent: 100, group: 100, executable: "/bin/dirname",
+            arguments: ["/bin/dirname", "/SDK With Spaces/bin/monkeydo"])
+        var children = fixture.reader.children
+        children[100] = [101, 103]
+        let reader = ProbeIdentityReader(
+            snapshots: snapshots, children: children,
+            groups: [100: [100, 101, 102]])
+        let probe = MonkeydoConnectionProbe(
+            processRunner: matchingShellRunner(), identityReader: reader,
+            clock: FakeClock(), serverPID: 500)
+
+        await expectProbeFailure {
+            try await probe.waitUntilConnected(
+                owned: fixture.owned,
+                listeningEndpoints: fixture.listeners,
+                timeout: .seconds(1))
+        }
     }
 
     @Test("duplicate launcher-group PIDs fail closed after fresh socket proof")

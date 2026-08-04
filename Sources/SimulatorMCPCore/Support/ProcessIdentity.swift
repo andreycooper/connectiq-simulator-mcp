@@ -144,13 +144,18 @@ struct DarwinKernelProcessReader: KernelProcessReading, Sendable {
         var size = Int(maximum)
         var data = Data(count: size)
         errno = 0
-        let result = data.withUnsafeMutableBytes { raw in
-            sysctl(&mib, u_int(mib.count), raw.baseAddress, &size, nil, 0)
+        var failure: Int32 = 0
+        let result = data.withUnsafeMutableBytes { raw -> Int32 in
+            let code = sysctl(&mib, u_int(mib.count), raw.baseAddress, &size, nil, 0)
+            // Captured immediately: the confirmation below issues another
+            // syscall, which would otherwise overwrite errno.
+            failure = errno
+            return code
         }
         guard result == 0 else {
-            if Self.indicatesVanishedProcess(errno) || errno == EINVAL { return nil }
-            throw Self.inspectionError(
-                "sysctl(KERN_PROCARGS2) failed for PID \(pid) with errno \(errno).", pid: pid)
+            return try Self.resolveArgumentsFailure(errno: failure, pid: pid) {
+                try bsdIdentity(pid: pid) == nil
+            }
         }
         guard size > 0, size <= data.count else {
             throw Self.inspectionError(
@@ -194,12 +199,77 @@ struct DarwinKernelProcessReader: KernelProcessReading, Sendable {
         code == ESRCH || code == ENOENT
     }
 
-    fileprivate static func inspectionError(_ message: String, pid: Int32? = nil) -> ToolError {
+    /// How a `KERN_PROCARGS2` failure is to be interpreted.
+    enum ArgumentCaptureDisposition: Equatable, Sendable {
+        /// The process is gone. The caller sees `nil`.
+        case vanished
+        /// The target's address space has already been torn down. Confirm the
+        /// process really is gone before reporting absence.
+        case confirmDeathThenVanish
+        /// A genuine fault that must fail closed.
+        case fault
+    }
+
+    /// Classification is deliberately site-specific: `indicatesVanishedProcess`
+    /// is shared with `proc_pidinfo` and `proc_pidpath`, and neither was
+    /// measured to return `EIO` for a dying process — both return `ESRCH`.
+    /// Widening the shared predicate would broaden a heuristic past its
+    /// evidence.
+    ///
+    /// `EIO` is returned when the target's argument region can no longer be
+    /// copied because its address space is already being removed — the terminal
+    /// phase of process death. Measured 2026-08-04 at 6.3% of force-kills for a
+    /// 64 MB target rising to 12.3% at 1 GB, and never once observed for a live
+    /// process across 3.4M samples.
+    static func disposition(forArgumentsErrno code: Int32) -> ArgumentCaptureDisposition {
+        if indicatesVanishedProcess(code) || code == EINVAL { return .vanished }
+        if code == EIO { return .confirmDeathThenVanish }
+        return .fault
+    }
+
+    /// Resolves a `KERN_PROCARGS2` failure to either absence (`nil`) or a
+    /// thrown fault. Never returns arguments.
+    ///
+    /// `confirmGone` is the second opinion for the teardown disposition: `EIO`
+    /// is only accepted as absence when an independent kernel route agrees the
+    /// process is gone. A PID recycled between the two reads as live and
+    /// therefore fails closed, which is the intended conservative direction.
+    static func resolveArgumentsFailure(
+        errno code: Int32,
+        pid: Int32,
+        confirmGone: () throws -> Bool
+    ) throws -> [String]? {
+        switch disposition(forArgumentsErrno: code) {
+        case .vanished:
+            return nil
+        case .confirmDeathThenVanish:
+            guard try confirmGone() else {
+                throw inspectionError(
+                    """
+                    sysctl(KERN_PROCARGS2) reported errno \(code) for PID \(pid), \
+                    meaning its address space is already gone, but the process is still live.
+                    """,
+                    pid: pid)
+            }
+            return nil
+        case .fault:
+            throw inspectionError(
+                "sysctl(KERN_PROCARGS2) failed for PID \(pid) with errno \(code).", pid: pid)
+        }
+    }
+
+    /// Records whether the target PID was still resolvable at throw time.
+    /// A dying process and a genuinely faulted one are otherwise
+    /// indistinguishable after the fact, which is what left gateD5's PID 816
+    /// unidentifiable.
+    static func inspectionError(_ message: String, pid: Int32? = nil) -> ToolError {
         ToolError(
             code: "process_inspection_failed",
             message: message,
             fix: "Retry the operation. If it repeats, stop the simulator and inspect the reported process identities before retrying.",
-            details: pid.map { ["pid": .int(Int($0))] })
+            details: pid.map {
+                ["pid": .int(Int($0)), "pidAlive": .bool(isProcessAlive($0))]
+            })
     }
 }
 
