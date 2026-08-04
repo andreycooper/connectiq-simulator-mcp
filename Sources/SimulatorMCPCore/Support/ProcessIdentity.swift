@@ -1,7 +1,7 @@
 import Darwin
 import Foundation
 
-public struct ProcessStartIdentity: Codable, Equatable, Sendable {
+public struct ProcessStartIdentity: Codable, Hashable, Sendable {
     public let seconds: UInt64
     public let microseconds: UInt64
 
@@ -45,7 +45,7 @@ public struct ProcessIdentitySnapshot: Codable, Equatable, Sendable {
     }
 }
 
-public struct StableProcessIdentity: Codable, Equatable, Sendable {
+public struct StableProcessIdentity: Codable, Hashable, Sendable {
     public let pid: Int32
     public let processGroupId: Int32
     public let start: ProcessStartIdentity

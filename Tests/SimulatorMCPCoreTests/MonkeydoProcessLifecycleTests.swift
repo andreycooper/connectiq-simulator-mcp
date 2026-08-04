@@ -305,8 +305,13 @@ struct MonkeydoProcessLifecycleTests {
         #expect(fixture.runtime.contains(pid: 100))
     }
 
-    @Test("launcher disappearance with a surviving group member fails closed")
-    func launcherDisappearanceWithSurvivorFailsClosed() async {
+    /// gateD4. Previously this demanded an empty group and refused otherwise,
+    /// which is unsatisfiable: a process group outlives its leader, so children
+    /// that outlive the launcher legitimately remain. The purpose of the check —
+    /// that cleanup cannot strand processes — is served by terminating them,
+    /// not by refusing. The unverified case below keeps the fail-closed half.
+    @Test("launcher disappearance terminates its verified group survivors")
+    func launcherDisappearanceTerminatesVerifiedSurvivors() async throws {
         let fixture = mutableCleanupFixture()
         fixture.runtime.remove(pid: 100)
         let lifecycle = MonkeydoProcessLifecycle(
@@ -315,12 +320,12 @@ struct MonkeydoProcessLifecycleTests {
             signalSender: fixture.runtime,
             serverPID: 500)
 
-        await #expect(throws: ToolError.self) {
-            try await lifecycle.terminate(fixture.owned, grace: .zero)
-        }
+        try await lifecycle.terminate(fixture.owned, grace: .zero)
 
-        #expect(fixture.runtime.values.isEmpty)
-        #expect(fixture.runtime.contains(pid: 102))
+        #expect(fixture.runtime.contains(pid: 101) == false)
+        #expect(fixture.runtime.contains(pid: 102) == false)
+        #expect(fixture.runtime.values.allSatisfy { $0.pid > 0 },
+            "survivors are signalled individually, never as a group")
     }
 
     @Test("an inherited server group always uses individual cleanup")
@@ -356,6 +361,66 @@ struct MonkeydoProcessLifecycleTests {
         try await lifecycle.terminate(fixture.owned, grace: .zero)
 
         #expect(fixture.runtime.values.map(\.pid) == [102, 103, 101, 100])
+    }
+
+    /// A process group outlives its leader, and a child that outlives it is
+    /// reparented to PID 1 — measured against the kernel. The tree is captured
+    /// before the group, so a reparent between the two changes only
+    /// `parentPid`, which `StableProcessIdentity` deliberately excludes.
+    /// Cleanup must neither abort on it nor silently leave the child running.
+    @Test("a group member reparented between captures is still cleaned up")
+    func reparentedGroupMemberIsStillCleanedUp() async throws {
+        let fixture = mutableCleanupFixture(
+            changeOnFirstGroupCapture: (102, reparented(pid: 102)))
+        let lifecycle = MonkeydoProcessLifecycle(
+            processRunner: LifecycleRunner(process: LifecycleRunningProcess(pid: 100)),
+            identityReader: fixture.runtime,
+            signalSender: fixture.runtime,
+            serverPID: 500)
+
+        try await lifecycle.terminate(fixture.owned, grace: .zero)
+
+        #expect(fixture.runtime.contains(pid: 102) == false,
+            "the reparented child must not be left running")
+        #expect(fixture.runtime.contains(pid: 100) == false)
+    }
+
+    /// The reparented member is still ours — verified at accept time — so the
+    /// dedicated-group path stays authorized rather than degrading to a
+    /// per-descendant walk that structurally cannot see it.
+    @Test("a reparented group member keeps the dedicated-group signal path")
+    func reparentedGroupMemberKeepsGroupPath() async throws {
+        let fixture = mutableCleanupFixture(
+            changeOnFirstGroupCapture: (102, reparented(pid: 102)))
+        let lifecycle = MonkeydoProcessLifecycle(
+            processRunner: LifecycleRunner(process: LifecycleRunningProcess(pid: 100)),
+            identityReader: fixture.runtime,
+            signalSender: fixture.runtime,
+            serverPID: 500)
+
+        try await lifecycle.terminate(fixture.owned, grace: .zero)
+
+        #expect(fixture.runtime.values.contains { $0.pid == -100 })
+    }
+
+    /// ...but a survivor that was never verified is exactly what the check
+    /// exists to catch, and must still fail closed without being signalled.
+    @Test("an unverified survivor of the launcher still fails closed")
+    func unverifiedSurvivorAfterLauncherExitFailsClosed() async {
+        // The accepted group knows nothing about PID 102.
+        let fixture = mutableCleanupFixture(acceptedGroup: [])
+        fixture.runtime.remove(pid: 100)
+        fixture.runtime.remove(pid: 101)
+        let lifecycle = MonkeydoProcessLifecycle(
+            processRunner: LifecycleRunner(process: LifecycleRunningProcess(pid: 100)),
+            identityReader: fixture.runtime,
+            signalSender: fixture.runtime,
+            serverPID: 500)
+
+        await #expect(throws: ToolError.self) {
+            try await lifecycle.terminate(fixture.owned, grace: .zero)
+        }
+        #expect(fixture.runtime.values.isEmpty)
     }
 
     @Test("group authorization rejects a changed full identity before signalling")
@@ -549,6 +614,7 @@ private struct MutableCleanupFixture {
 }
 
 private func mutableCleanupFixture(
+    acceptedGroup: [StableProcessIdentity]? = nil,
     includeExtra: Bool = false,
     groupPIDs: [Int32]? = nil,
     survivesTerm: Set<Int32> = [],
@@ -578,12 +644,20 @@ private func mutableCleanupFixture(
         vanishListedPIDAfterFirstPostSignalGroupList:
             vanishListedPIDAfterFirstPostSignalGroupList,
         movePIDToOtherGroupAfterGroupTERM: movePIDToOtherGroupAfterGroupTERM)
+    // The group the probe verified at accept time is the owned tree — the
+    // launcher and its descendants. Deliberately NOT "everything currently in
+    // the group": `includeExtra` models a foreign process sharing the pgid,
+    // and authorizing that would defeat the check under test.
+    let verified = acceptedGroup ?? staticFixture.reader.snapshots.values
+        .filter { [100, 101, 102].contains($0.pid) }
+        .map(\.stableIdentity)
     return MutableCleanupFixture(
         runtime: runtime,
         owned: OwnedMonkeydoProcess(
             process: LifecycleRunningProcess(pid: 100),
             launcher: staticFixture.owned.launcher,
-            command: staticFixture.owned.command))
+            command: staticFixture.owned.command,
+            acceptedGroup: verified))
 }
 
 private func inheritedGroupCleanupFixture() -> MutableCleanupFixture {
@@ -804,6 +878,19 @@ private final class LifecycleSignalRecorder: SimulatorMCPCore.ProcessSignalSendi
     func signal(pid: Int32, signal: Int32) throws {
         lock.withLock { recorded.append(LifecycleSignalCall(pid: pid, signal: signal)) }
     }
+}
+
+/// The same process, reparented to PID 1 after its launcher died. Every field
+/// `StableProcessIdentity` covers is preserved; only `parentPid` moves.
+private func reparented(pid: Int32) -> ProcessIdentitySnapshot {
+    let sdk = sampleSdk()
+    return ProcessIdentitySnapshot(
+        pid: pid,
+        parentPid: 1,
+        processGroupId: 100,
+        start: ProcessStartIdentity(seconds: 1000, microseconds: UInt64(pid)),
+        executablePath: sdk.root.appending(path: "bin/shell").path,
+        arguments: ["shell"])
 }
 
 private struct LifecycleSignalCall: Equatable, Sendable {

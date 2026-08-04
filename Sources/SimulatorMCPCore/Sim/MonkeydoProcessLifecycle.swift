@@ -60,17 +60,59 @@ public struct OwnedMonkeydoProcess: Sendable {
     public let process: any RunningProcess
     public let launcher: ProcessIdentitySnapshot
     public let command: MonkeydoCommand
+
+    /// The launcher group as the connection probe verified it at accept time,
+    /// when the tree was provably intact.
+    ///
+    /// This is the only evidence that can identify a process which is ours but
+    /// no longer reachable by parentage. A process group outlives its leader,
+    /// and a child that outlives the launcher is reparented to PID 1 — it
+    /// leaves the descendant walk permanently while remaining in the group.
+    /// Empty when the session was never accepted (an aborted launch, or a
+    /// persisted ownership record), in which case cleanup falls back to
+    /// refusing anything it cannot anchor.
+    public let acceptedGroup: [StableProcessIdentity]
+
     private let drain: MonkeydoProcessDrain
 
     public init(
         process: any RunningProcess,
         launcher: ProcessIdentitySnapshot,
-        command: MonkeydoCommand
+        command: MonkeydoCommand,
+        acceptedGroup: [StableProcessIdentity] = []
     ) {
         self.process = process
         self.launcher = launcher
         self.command = command
+        self.acceptedGroup = acceptedGroup
         self.drain = MonkeydoProcessDrain(process: process)
+    }
+
+    private init(
+        process: any RunningProcess,
+        launcher: ProcessIdentitySnapshot,
+        command: MonkeydoCommand,
+        acceptedGroup: [StableProcessIdentity],
+        drain: MonkeydoProcessDrain
+    ) {
+        self.process = process
+        self.launcher = launcher
+        self.command = command
+        self.acceptedGroup = acceptedGroup
+        self.drain = drain
+    }
+
+    /// Returns a copy carrying the verified group, sharing the same drain so
+    /// the one child result is still awaited exactly once.
+    public func adoptingAcceptedGroup(
+        _ group: [StableProcessIdentity]
+    ) -> OwnedMonkeydoProcess {
+        OwnedMonkeydoProcess(
+            process: process,
+            launcher: launcher,
+            command: command,
+            acceptedGroup: group,
+            drain: drain)
     }
 
     /// Returns the one shared child result. Natural-exit observers and the
@@ -232,7 +274,7 @@ public struct MonkeydoProcessLifecycle: MonkeydoProcessLifecycling, Sendable {
         grace: Duration
     ) async throws {
         guard try identityReader.snapshot(pid: owned.launcher.pid) != nil else {
-            try requireNoGroupSurvivorsAfterLauncherExit(owned)
+            try await terminateVerifiedSurvivorsAfterLauncherExit(owned, grace: grace)
             _ = try await owned.output()
             return
         }
@@ -257,16 +299,27 @@ public struct MonkeydoProcessLifecycle: MonkeydoProcessLifecycling, Sendable {
             throw cleanupError("the simulator-mcp server process could not be identity-inspected")
         }
         let treeByPID = Dictionary(uniqueKeysWithValues: tree.all.map { ($0.pid, $0) })
+        let verified = Set(owned.acceptedGroup)
         for (pid, member) in group {
-            if let treeMember = treeByPID[pid], member != treeMember {
-                throw cleanupError(
-                    "launcher-group PID \(pid) changed identity during cleanup authorization")
+            if let treeMember = treeByPID[pid] {
+                guard member.stableIdentity == treeMember.stableIdentity else {
+                    throw cleanupError(
+                        "launcher-group PID \(pid) changed identity during cleanup authorization")
+                }
+            } else if !verified.contains(member.stableIdentity) {
+                // In our group but not in our tree, and never verified at accept
+                // time: not provably ours, so the group is not safe to signal.
+                return nil
             }
         }
         guard tree.launcher.processGroupId > 0,
             tree.launcher.processGroupId == tree.launcher.pid,
             tree.launcher.processGroupId != server.processGroupId,
-            treeByPID == group,
+            // Tree ⊆ group, and group ⊆ tree ∪ accepted baseline (checked
+            // above). Exact equality cannot be required: a reparented child
+            // leaves the parentage walk permanently while staying in the group,
+            // so tree and group legitimately differ in membership.
+            treeByPID.keys.allSatisfy({ group[$0] != nil }),
             group.values.allSatisfy({ $0.processGroupId == tree.launcher.processGroupId })
         else { return nil }
         return group
@@ -411,7 +464,7 @@ public struct MonkeydoProcessLifecycle: MonkeydoProcessLifecycling, Sendable {
     ) async throws {
         while true {
             guard try identityReader.snapshot(pid: owned.launcher.pid) != nil else {
-                try requireNoGroupSurvivorsAfterLauncherExit(owned)
+                try await terminateVerifiedSurvivorsAfterLauncherExit(owned, grace: grace)
                 return
             }
             let tree = try captureCleanupTree(owned)
@@ -538,20 +591,75 @@ public struct MonkeydoProcessLifecycle: MonkeydoProcessLifecycling, Sendable {
     ) throws {
         let current = try captureGroup(processGroupId: owned.launcher.processGroupId)
         for (pid, member) in current {
-            guard pid != owned.launcher.pid, baseline[pid] == member else {
+            // Stable identity: a group member is reparented the moment the
+            // launcher dies, which is not a change of identity.
+            guard pid != owned.launcher.pid,
+                baseline[pid]?.stableIdentity == member.stableIdentity
+            else {
                 throw cleanupError(
                     "the launcher exited while a new, changed, or owned group PID \(pid) remained")
             }
         }
     }
 
-    private func requireNoGroupSurvivorsAfterLauncherExit(
-        _ owned: OwnedMonkeydoProcess
-    ) throws {
-        let current = try captureGroup(processGroupId: owned.launcher.processGroupId)
-        guard current.isEmpty else {
-            throw cleanupError(
-                "the launcher disappeared while process-group PIDs \(current.keys.sorted()) remained")
+    /// The launcher is gone and the group may not be empty.
+    ///
+    /// A process group outlives its leader, so survivors are ordinary rather
+    /// than anomalous — demanding an empty group here was unsatisfiable
+    /// whenever a child outlived the launcher. But survivors are real and still
+    /// running, and this check exists so cleanup cannot strand them, so they are
+    /// terminated rather than merely tolerated.
+    ///
+    /// Every survivor must match the group the connection probe verified at
+    /// accept time. Anything else is not provably ours and still fails closed
+    /// without being signalled — including when no baseline exists at all,
+    /// which is exactly today's behaviour.
+    private func terminateVerifiedSurvivorsAfterLauncherExit(
+        _ owned: OwnedMonkeydoProcess,
+        grace: Duration
+    ) async throws {
+        let verified = Set(owned.acceptedGroup)
+        while true {
+            let current = try captureGroup(processGroupId: owned.launcher.processGroupId)
+            if current.isEmpty { return }
+            guard current.values.allSatisfy({ verified.contains($0.stableIdentity) }) else {
+                throw cleanupError(
+                    "the launcher disappeared while process-group PIDs \(current.keys.sorted()) remained")
+            }
+            for pid in current.keys.sorted() {
+                guard let survivor = current[pid] else { continue }
+                try await terminateVerifiedSurvivor(survivor, grace: grace)
+            }
+        }
+    }
+
+    private func terminateVerifiedSurvivor(
+        _ target: ProcessIdentitySnapshot,
+        grace: Duration
+    ) async throws {
+        try sendSignal(pid: target.pid, signal: SIGTERM)
+        if try await waitForSurvivorExit(target, timeout: grace) { return }
+        try sendSignal(pid: target.pid, signal: SIGKILL)
+        guard try await waitForSurvivorExit(target, timeout: .seconds(5)) else {
+            throw cleanupError("owned group survivor PID \(target.pid) survived SIGKILL")
+        }
+    }
+
+    /// Stable identity, not the full snapshot: a survivor is reparented to PID 1
+    /// the moment its launcher dies, and may be reparented again while exiting.
+    private func waitForSurvivorExit(
+        _ target: ProcessIdentitySnapshot,
+        timeout: Duration
+    ) async throws -> Bool {
+        let deadline = makeDeadline(timeout)
+        while true {
+            guard let current = try identityReader.snapshot(pid: target.pid) else { return true }
+            guard current.stableIdentity == target.stableIdentity else {
+                throw cleanupError(
+                    "group survivor PID \(target.pid) changed identity while exiting")
+            }
+            guard !deadline.hasExpired else { return false }
+            try await deadline.sleepUntilNextPoll(maximumInterval: .milliseconds(100))
         }
     }
 

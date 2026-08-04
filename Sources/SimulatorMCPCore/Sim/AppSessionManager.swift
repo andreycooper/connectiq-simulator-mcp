@@ -37,7 +37,7 @@ public actor AppSessionManager: SimulatorSessionStopping {
     private struct SessionRecord: Sendable {
         let id: UInt64
         let nonce: UUID
-        let owned: OwnedMonkeydoProcess
+        var owned: OwnedMonkeydoProcess
         let buffer: SessionEventBuffer
         var state: SessionState
         var terminationReason: TerminationReason?
@@ -184,11 +184,17 @@ public actor AppSessionManager: SimulatorSessionStopping {
         return handle
     }
 
+    /// `acceptedGroup` is the launcher group the connection probe verified at
+    /// accept time. Cleanup needs it to identify a process that is ours but no
+    /// longer reachable by parentage — a child reparented to PID 1 when the
+    /// launcher died. Empty means cleanup can anchor nothing and refuses, which
+    /// is the pre-existing behaviour.
     public func commit(
         _ pendingSession: PendingSession,
         device: String,
         prgPath: URL,
-        sdk: SdkInfo
+        sdk: SdkInfo,
+        acceptedGroup: [StableProcessIdentity] = []
     ) async throws -> UInt64 {
         guard !device.isEmpty else {
             throw ToolError(
@@ -230,6 +236,7 @@ public actor AppSessionManager: SimulatorSessionStopping {
         committed.device = device
         committed.prgPath = prgPath
         committed.sdk = sdk
+        committed.owned = committed.owned.adoptingAcceptedGroup(acceptedGroup)
         pending = nil
         current = committed
         return committed.id

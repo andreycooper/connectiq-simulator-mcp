@@ -196,7 +196,8 @@ public struct RunCoordinator: Sendable {
                         try await controller.publishActiveMonkeydo(
                             pending.owned, device: request.device, inside: .runApp)
                         let sessionID = try await sessionManager.commit(
-                            pending, device: request.device, prgPath: prg, sdk: request.sdk)
+                            pending, device: request.device, prgPath: prg, sdk: request.sdk,
+                            acceptedGroup: accepted.launcherGroupMembers.map(\.stableIdentity))
                         committed = true
                         guard let wireID = Int(exactly: sessionID) else {
                             try await taggingCleanupSite("runApp.terminateCurrent") {
@@ -278,6 +279,10 @@ public struct RunCoordinator: Sendable {
                         throw launchFailed("monkeydo could not start: \(error.localizedDescription)")
                     }
 
+                    // Cleanup anchors on the group the probe verified. Until
+                    // acceptance there is nothing verified, and cleanup keeps
+                    // refusing whatever it cannot anchor.
+                    var ownedForCleanup = owned
                     let outputObserver = Task {
                         do {
                             let output = try await owned.output()
@@ -298,8 +303,10 @@ public struct RunCoordinator: Sendable {
                             timeout: deadline.remaining,
                             elapsedBeforeProbe: launchTimeout - deadline.remaining)
                         await evidenceObserver?.accepted(accepted)
+                        ownedForCleanup = owned.adoptingAcceptedGroup(
+                            accepted.launcherGroupMembers.map(\.stableIdentity))
                         let summary = try await collector.waitForSummary()
-                        try await lifecycle.terminate(owned, grace: .seconds(5))
+                        try await lifecycle.terminate(ownedForCleanup, grace: .seconds(5))
                         _ = try await outputObserver.value
                         try await controller.clearActiveMonkeydo(
                             expectedLauncher: owned.launcher.stableIdentity,
@@ -310,7 +317,7 @@ public struct RunCoordinator: Sendable {
                         if isEarlyExit(error) {
                             if (try? await outputObserver.value) != nil {
                                 if let summary = try? await collector.waitForSummary() {
-                                    try await lifecycle.terminate(owned, grace: .seconds(5))
+                                    try await lifecycle.terminate(ownedForCleanup, grace: .seconds(5))
                                     try await controller.clearActiveMonkeydo(
                                         expectedLauncher: owned.launcher.stableIdentity,
                                         device: request.device,
@@ -319,7 +326,7 @@ public struct RunCoordinator: Sendable {
                                 }
                             }
                         }
-                        try await lifecycle.terminate(owned, grace: .seconds(5))
+                        try await lifecycle.terminate(ownedForCleanup, grace: .seconds(5))
                         _ = try? await outputObserver.value
                         // Atomic rename may have published ownership even if
                         // the following directory fsync reported failure.
