@@ -503,7 +503,7 @@ private final class InstalledServerProcessExitBarrier: @unchecked Sendable {
 let task17RequiredToolNames: Set<String> = [
     "doctor", "list_sdks", "list_devices", "build", "sim_start", "sim_stop",
     "sim_status", "run_app", "run_tests", "get_logs", "screenshot", "set_gps_position",
-    "press_button",
+    "press_button", "run_sequence",
 ]
 
 func validateTask17ToolAdvertisement(_ toolNames: [String]) throws {

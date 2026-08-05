@@ -11,6 +11,7 @@ public enum SimOperation: String, Codable, Sendable {
     case screenshot
     case pressButton = "press_button"
     case setGpsPosition = "set_gps_position"
+    case runSequence = "run_sequence"
 }
 
 public enum OperationRequirement: Sendable {

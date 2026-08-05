@@ -588,3 +588,88 @@ public struct SetGpsPositionResult: Codable, Equatable, Sendable {
         self.simulatorPid = simulatorPid
     }
 }
+
+// MARK: - run_sequence
+
+/// One step's result. A flat record with per-kind nullable columns — the idiom
+/// `diagnostics` and `perTest` already use. Every column is encoded explicitly,
+/// including nulls, so each documented key is always on the wire.
+public struct SequenceStepOutcome: Codable, Equatable, Sendable {
+    public let index: Int
+    public let kind: String
+    public let status: String
+    public let label: String?
+    public let button: String?
+    public let pressType: String?
+    public let transport: String?
+    public let waitedMs: Int?
+    public let linesScanned: Int?
+    public let path: String?
+    public let width: Int?
+    public let height: Int?
+
+    public init(
+        index: Int,
+        kind: String,
+        status: String,
+        label: String? = nil,
+        button: String? = nil,
+        pressType: String? = nil,
+        transport: String? = nil,
+        waitedMs: Int? = nil,
+        linesScanned: Int? = nil,
+        path: String? = nil,
+        width: Int? = nil,
+        height: Int? = nil
+    ) {
+        self.index = index
+        self.kind = kind
+        self.status = status
+        self.label = label
+        self.button = button
+        self.pressType = pressType
+        self.transport = transport
+        self.waitedMs = waitedMs
+        self.linesScanned = linesScanned
+        self.path = path
+        self.width = width
+        self.height = height
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(index, forKey: .index)
+        try container.encode(kind, forKey: .kind)
+        try container.encode(status, forKey: .status)
+        try container.encode(label, forKey: .label)
+        try container.encode(button, forKey: .button)
+        try container.encode(pressType, forKey: .pressType)
+        try container.encode(transport, forKey: .transport)
+        try container.encode(waitedMs, forKey: .waitedMs)
+        try container.encode(linesScanned, forKey: .linesScanned)
+        try container.encode(path, forKey: .path)
+        try container.encode(width, forKey: .width)
+        try container.encode(height, forKey: .height)
+    }
+}
+
+public struct SequenceResult: Codable, Equatable, Sendable {
+    /// Null when the sequence contained no `waitForLog` step, because only a
+    /// wait needs a session at all.
+    public let sessionId: Int?
+    public let steps: [SequenceStepOutcome]
+    public let frameCount: Int
+
+    public init(sessionId: Int?, steps: [SequenceStepOutcome], frameCount: Int) {
+        self.sessionId = sessionId
+        self.steps = steps
+        self.frameCount = frameCount
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(sessionId, forKey: .sessionId)
+        try container.encode(steps, forKey: .steps)
+        try container.encode(frameCount, forKey: .frameCount)
+    }
+}

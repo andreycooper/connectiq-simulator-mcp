@@ -585,7 +585,8 @@ struct InstalledButtonDeliveryIntegrationTests {
 
 /// Reads the fixture's own stdout markers through the published get_logs tool,
 /// advancing the cursor so a marker is never double-counted.
-private actor FixtureMarkerReader {
+/// Shared by every installed gate that reads fixture markers.
+actor FixtureMarkerReader {
     private let client: InstalledServerClient
     private let sessionId: Int
     private var cursor: String?
@@ -833,12 +834,12 @@ struct TCCAttributionTests {
     }
 }
 
-private struct InstalledIntegrationError: Error, CustomStringConvertible {
+struct InstalledIntegrationError: Error, CustomStringConvertible {
     let description: String
     init(_ description: String) { self.description = description }
 }
 
-private func requireSuccess<Result: Codable & Sendable>(
+func requireSuccess<Result: Codable & Sendable>(
     _ response: InstalledToolResponse<Result>,
     tool: String
 ) throws -> Result {
@@ -858,7 +859,7 @@ private func requireSuccess<Result: Codable & Sendable>(
 
 /// Polls sim_status until the simulator reports it is no longer running, so a
 /// following launch cannot race the previous tree's teardown.
-private func waitForSimulatorStopped(
+func waitForSimulatorStopped(
     _ client: InstalledServerClient, deadline: Duration
 ) async throws {
     let clock = ContinuousClock()

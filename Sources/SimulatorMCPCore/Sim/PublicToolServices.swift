@@ -40,7 +40,15 @@ extension ToolHandlerServices {
         let buttonService = ButtonInputService(
             devices: devices,
             operationRunner: ButtonOperationRunner(controller: composition.controller))
-        return try composition.services.qualification(profile: primary) {
+        let sequence = SequenceService.live(
+            controller: composition.controller,
+            sessions: composition.sessions,
+            buttonDevices: devices,
+            deviceCatalog: composition.deviceCatalog)
+        return try composition.services.qualification(
+            profile: primary,
+            runSequence: { try await sequence.run($0) }
+        ) {
             try await buttonService.press($0)
         }
     }
@@ -155,13 +163,20 @@ extension ToolHandlerServices {
             setGpsPosition: { request in
                 try await gpsPosition.setPosition(request)
             })
-        return LiveToolServiceComposition(services: services, controller: controller)
+        return LiveToolServiceComposition(
+            services: services, controller: controller, sessions: sessions,
+            deviceCatalog: catalog)
     }
 }
 
 private struct LiveToolServiceComposition: Sendable {
     let services: ToolHandlerServices
     let controller: SimulatorController
+    /// The sequence service reads the session log and resolves device display
+    /// rects, so it needs the same two collaborators the rest of this
+    /// composition already owns rather than second instances of them.
+    let sessions: AppSessionManager
+    let deviceCatalog: DeviceCatalog
 }
 
 private func liveSdkProbe(locator: SdkLocator) -> DoctorProbeStatus {

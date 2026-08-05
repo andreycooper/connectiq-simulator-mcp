@@ -229,7 +229,9 @@ struct MenuAutomation: Sendable {
                 throw ToolError(
                     code: "permission_denied",
                     message: "Accessibility permission is required to set simulator GPS position.",
-                    fix: "Open System Settings > Privacy & Security > Accessibility, enable the installed simulator-mcp executable, restart its MCP host, then retry.")
+                    fix: Permissions.grantInstructions(
+                        settingsPath: Permissions.accessibilitySettingsPath,
+                        executablePath: SignatureInspector.currentExecutableURL().path))
             }
             let application = try await accessibility.application(pid: simulatorPid)
             try await accessibility.setMessagingTimeout(1, for: application)

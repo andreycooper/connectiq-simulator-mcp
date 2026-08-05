@@ -138,7 +138,9 @@ struct ScreenCaptureKitCapturer: ScreenshotCapturing {
             throw ToolError(
                 code: "screen_recording_denied",
                 message: "Screen Recording permission is not granted for the MCP server or its responsible host.",
-                fix: "Call doctor with requestPermissions=true, open \(Permissions.screenSettingsPath), enable the exact executable reported by doctor, then fully restart the MCP host.")
+                fix: Permissions.grantInstructions(
+                    settingsPath: Permissions.screenSettingsPath,
+                    executablePath: SignatureInspector.currentExecutableURL().path))
         }
 
         let captured: WindowCapture
@@ -459,11 +461,24 @@ public struct ScreenshotService: Sendable {
 
     public init(controller: SimulatorController, deviceCatalog: DeviceCatalog = DeviceCatalog()) {
         self.init(
-            operationRunner: ScreenshotOperationRunner(controller: controller),
+            deviceCatalog: deviceCatalog,
+            operationRunner: ScreenshotOperationRunner(controller: controller))
+    }
+
+    /// Live wiring with an injected runner, so a composing service can supply a
+    /// lease-free runner without hand-copying `displayRect`/`makeCapturer` —
+    /// two copies of that wiring would be free to drift apart.
+    init(
+        deviceCatalog: DeviceCatalog = DeviceCatalog(),
+        operationRunner: ScreenshotOperationRunner,
+        makeCapturer: (@Sendable (PixelRect?) -> any ScreenshotCapturing)? = nil
+    ) {
+        self.init(
+            operationRunner: operationRunner,
             displayRect: { device in
                 deviceCatalog.installedDevices().first { $0.deviceId == device }?.displayRect
             },
-            makeCapturer: { ScreenCaptureKitCapturer(appDisplayRect: $0) })
+            makeCapturer: makeCapturer ?? { ScreenCaptureKitCapturer(appDisplayRect: $0) })
     }
 
     init(

@@ -65,21 +65,34 @@ public enum ToolResultFactory {
         )
     }
 
-    public static func failure(_ error: ToolError) -> CallTool.Result {
+    /// `additionalContent` is symmetric with `success`: a tool whose evidence
+    /// is content blocks — captured frames, say — must be able to return that
+    /// evidence on the failure that makes it worth looking at. Only a handler
+    /// that *returns* rather than throws can use it; `ToolRegistry` builds its
+    /// own failure from a thrown error and has no content to attach.
+    public static func failure(
+        _ error: ToolError,
+        additionalContent: [Tool.Content] = []
+    ) -> CallTool.Result {
         let envelope = ToolEnvelope<JSONValue>(ok: false, result: nil, error: ToolFailure(error))
-        if let result = try? failureResult(for: envelope) {
+        if let result = try? failureResult(for: envelope, additionalContent: additionalContent) {
             return result
         }
 
         // The only theoretically fallible member above is `details`
         // (arbitrary JSONValue); retry without it rather than lose the
-        // failure entirely.
+        // failure entirely. `failedStepIndex` is retained when present: for a
+        // partial run it is the difference between "something failed" and
+        // "step 4 of 6 failed", and it is a plain integer that cannot be the
+        // member that failed to encode.
+        let retained = error.details?["failedStepIndex"].map { ["failedStepIndex": $0] }
         let stripped = ToolEnvelope<JSONValue>(
             ok: false,
             result: nil,
-            error: ToolFailure(code: error.code, message: error.message, fix: error.fix)
+            error: ToolFailure(
+                code: error.code, message: error.message, fix: error.fix, details: retained)
         )
-        if let result = try? failureResult(for: stripped) {
+        if let result = try? failureResult(for: stripped, additionalContent: additionalContent) {
             return result
         }
 
@@ -92,7 +105,7 @@ public enum ToolResultFactory {
                     text:
                         #"{"error":{"code":"internal_error","fix":"Run doctor, then retry. If it repeats, inspect the server stderr log.","message":"Failed to encode a failure envelope."},"ok":false}"#,
                     annotations: nil, _meta: nil)
-            ],
+            ] + additionalContent,
             structuredContent: [
                 "ok": false,
                 "error": [
@@ -107,11 +120,12 @@ public enum ToolResultFactory {
     }
 
     private static func failureResult(
-        for envelope: ToolEnvelope<JSONValue>
+        for envelope: ToolEnvelope<JSONValue>,
+        additionalContent: [Tool.Content]
     ) throws -> CallTool.Result {
         let json = try sortedJSON(envelope)
         return try CallTool.Result(
-            content: [.text(text: json, annotations: nil, _meta: nil)],
+            content: [.text(text: json, annotations: nil, _meta: nil)] + additionalContent,
             structuredContent: envelope,
             isError: true,
             _meta: nil

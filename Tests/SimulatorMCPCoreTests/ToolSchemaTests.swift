@@ -50,6 +50,36 @@ struct ToolSchemaTests {
             }
         ),
         (
+            "run_sequence", Schemas.runSequenceResult,
+            {
+                try ToolResultFactory.success(
+                    SequenceResult(
+                        sessionId: 7,
+                        steps: [
+                            SequenceStepOutcome(
+                                index: 0, kind: "screenshot", status: "completed",
+                                label: "initial", path: "/tmp/simulator-mcp/a.png",
+                                width: 454, height: 454),
+                            SequenceStepOutcome(
+                                index: 1, kind: "press", status: "completed",
+                                button: "enter", pressType: "hold", transport: "focused-keys"),
+                            // A failed step reports no per-kind columns: the
+                            // wait's elapsed time and line count ride in the
+                            // failure's details instead.
+                            SequenceStepOutcome(
+                                index: 2, kind: "waitForLog", status: "failed"),
+                            SequenceStepOutcome(index: 3, kind: "screenshot", status: "skipped",
+                                                label: "menu"),
+                        ],
+                        frameCount: 1),
+                    additionalContent: [
+                        .image(
+                            data: Data([0x89]).base64EncodedString(), mimeType: "image/png",
+                            annotations: nil, _meta: nil)
+                    ])
+            }
+        ),
+        (
             "list_sdks", Schemas.listSdksResult,
             {
                 try ToolResultFactory.success(

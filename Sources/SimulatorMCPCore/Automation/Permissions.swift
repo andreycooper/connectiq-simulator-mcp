@@ -47,6 +47,44 @@ public struct Permissions: Sendable {
     public static let accessibilitySettingsPath =
         "System Settings > Privacy & Security > Accessibility"
 
+    /// The one place that says how to grant a permission. Every code path that
+    /// reports a denial routes through here, because four hand-written copies
+    /// of these instructions are four chances to drift.
+    ///
+    /// Two facts are stated because omitting either one makes the fix
+    /// unactionable, and both were established the hard way on 2026-08-05:
+    ///
+    /// - The install directory is a **dot-directory**, so it does not appear in
+    ///   the System Settings file picker at all until ⌘⇧G is used. Naming the
+    ///   path without saying this sends the reader to a dialog that appears not
+    ///   to contain the file.
+    /// - **An install can leave a stale entry that looks enabled.** Measured
+    ///   twice on 2026-08-05 with opposite results: one install left both
+    ///   preflights `false` until the executable was removed and re-added; the
+    ///   next install changed the cdhash again and both stayed `true`. The
+    ///   difference was the provenance of the entry, not the rebuild — so the
+    ///   claim this text can support is only that re-adding is the remedy
+    ///   *when denied*, not that a rebuild always denies. Do not generalise
+    ///   either observation further than that; two points are not a rule.
+    public static func grantInstructions(
+        settingsPath: String,
+        executablePath: String
+    ) -> String {
+        let directory = (executablePath as NSString).deletingLastPathComponent
+        let name = (executablePath as NSString).lastPathComponent
+        // Only claim the folder is hidden when it actually is: the host-app
+        // layout installs to Contents/MacOS, which is browsable, and
+        // INSTALL_DIR can be overridden. Command-Shift-G is correct either way,
+        // so the instruction stands and only the explanation is conditional.
+        let hidden = directory.split(separator: "/").contains { $0.hasPrefix(".") }
+        let hiddenNote = hidden ? " (a hidden folder, so it is not browsable)" : ""
+        return "Open \(settingsPath), click +, press Command-Shift-G, enter "
+            + "\(directory)\(hiddenNote), select \(name), "
+            + "and switch it on. If \(name) is already listed, remove it with - and add it "
+            + "again: an install can leave a stale entry that looks enabled but is not "
+            + "honoured. Then fully restart the MCP host."
+    }
+
     private let screenPreflight: @Sendable () async -> Bool
     private let screenRequest: @Sendable () async -> Bool
     private let accessibilityPreflight: @Sendable () async -> Bool
@@ -204,7 +242,8 @@ public struct DoctorService: Sendable {
             ? "granted\(status.prompted ? " after an explicit request" : "")"
             : "denied\(status.prompted ? " after an explicit request" : "; no prompt requested")"
         let fix = status.restartRequired
-            ? "Open \(status.systemSettingsPath), enable the exact executable \(executablePath), then fully restart the MCP host after changing the grant."
+            ? Permissions.grantInstructions(
+                settingsPath: status.systemSettingsPath, executablePath: executablePath)
             : nil
         return DoctorCheck(name: name, ok: status.granted, observed: observed, fix: fix)
     }

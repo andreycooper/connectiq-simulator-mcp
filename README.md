@@ -170,13 +170,26 @@ JSON as the first text content item. Success is `{ok:true,result:...}` with
 | `screenshot` | `savePath?` | PNG image content plus dimensions, simulator PID, saved path, and `appDisplayRect`. Permission denial names the exact onboarding fix. |
 | `set_gps_position` | `lat`, `lon` | Checked coordinates and simulator PID after semantic Accessibility automation and dialog-close proof. |
 | `press_button` | `button`; optional `holdMs` (50–5000), `allowFocus` (default `false`) | Delivers a verified hardware button to the focused simulator and reports the button, press type, transport, and simulator PID. |
+| `run_sequence` | `steps` (1–20, each `press`/`screenshot`/`waitForLog`); optional `allowFocus` (default `false`) | Runs a scripted interaction under a **single** simulator lease and returns every captured frame inline as an image block. A failed step still returns the frames captured before it plus one taken at the moment of failure. |
 
 ### Button automation
 
-`press_button` is verified for `fenix6xpro` on SDK 8.4.1 and 9.1.0 with the
-buttons `enter`, `esc`, `up`, and `down`. Capability is an explicit allowlist:
-no other device advertises input, because a device-name or simulator-JSON
-match is not evidence that a transport works.
+`press_button` is verified for **19 fēnix devices** with the buttons `enter`,
+`esc`, `up`, and `down`, qualified through 32 device×SDK combinations:
+
+- **SDK 8.4.1 and 9.1.0** — `fenix6`, `fenix6pro`, `fenix6s`, `fenix6spro`,
+  `fenix6xpro`, `fenix7`, `fenix7pro`, `fenix7pronowifi`, `fenix7s`,
+  `fenix7spro`, `fenix7x`, `fenix7xpro`, `fenix7xpronowifi`.
+- **SDK 9.1.0 only** — `fenix843mm`, `fenix847mm`, `fenix8pro47mm`,
+  `fenix8solar47mm`, `fenix8solar51mm`, `fenixe`. These profiles need API level
+  6.0.0, which 8.4.1 cannot compile, so capability is claimed for 9.1.0 and
+  nothing else.
+
+Capability is an explicit allowlist keyed by exact device id *and* SDK version.
+The other 143 installed devices advertise `inputSupported=false`, `buttons=[]`
+and `inputProfile=null` — including `fenix3`, `fenix5` and `fenixchronos`,
+which share the same physical key layout and stay fail-closed anyway. A
+device-name or simulator-JSON match is not evidence that a transport works.
 
 The transport posts a key-down/key-up pair to the frontmost simulator. It
 requires the ANSI-US input source (`com.apple.keylayout.US`) and the
@@ -190,9 +203,57 @@ call visibly brings the simulator forward and leaves it frontmost. With
 `allowFocus=false` and the simulator in the background, the call returns
 `focus_required` and posts no event.
 
-There is no `menu` button for `fenix6xpro`. The device has no menu key; on
-real hardware and in the simulator, menu is a long press of `up`
-(`press_button` with `button: "up"` and `holdMs: 1000`).
+No device in the family exposes a `menu` button. On real hardware and in the
+simulator, menu is a long press of `up` (`press_button` with `button: "up"` and
+`holdMs: 1000`). All 19 share one layout group and identical key codes,
+measured per device rather than inferred from key names.
+
+### Scripted sequences
+
+`run_sequence` runs a short interaction under a **single** simulator lease and
+returns every captured frame inline, so the model sees the whole filmstrip in
+one response instead of reasoning about screenshots several turns apart.
+
+```jsonc
+{
+  "steps": [
+    { "kind": "screenshot", "label": "initial" },
+    { "kind": "press",      "button": "enter", "holdMs": 1000 },
+    { "kind": "waitForLog", "contains": "MENU_OPENED", "timeoutMs": 5000 },
+    { "kind": "screenshot", "label": "menu" }
+  ],
+  "allowFocus": true
+}
+```
+
+Because it holds one lease for the whole run, no other MCP client can drive the
+simulator part-way through the interaction. A person typing at the keyboard
+still can: `press` posts key events to the frontmost application, which is not
+a channel the lease owns.
+
+Four things are worth knowing before writing one:
+
+- **`waitForLog` only matches markers printed after the sequence starts.** It
+  baselines on the log's end-of-buffer cursor, so a marker the app printed
+  earlier can never satisfy it.
+- **Waits are ordered.** Each one resumes where the previous one matched, so
+  waiting for a marker that was printed *before* an already-matched one will
+  time out.
+- **A marker needs a trailing newline.** An unterminated line is not yet a log
+  line and stays invisible until the app exits. `System.println` appends one.
+- **A marker proves a code path was reached, not that drawing finished.** For a
+  wait to imply a completed redraw, print it from inside `onUpdate()` after the
+  draw calls.
+
+If a step fails, the call returns `ok:false` **with the frames captured before
+it**, plus one taken at the moment of failure, and `details.failedStepIndex`
+naming the step. A `waitForLog` short-circuits when the app exits rather than
+burning its timeout, and says the app died.
+
+Bounds: at most 20 steps, 3 screenshots, 20 s of declared waits, and a 120 s
+budget across the run. The frame cap is small on purpose — a simulator window
+PNG measures ~973 KB, so every frame is roughly a megabyte of base64 in the
+response.
 
 ## Build and test
 

@@ -7,7 +7,7 @@ import SimulatorMCPCore
 @Suite("DoctorTool")
 struct DoctorToolTests {
     @Test("doctor reports every check and exact denied-permission fixes")
-    func deniedPermissionFixes() async {
+    func deniedPermissionFixes() async throws {
         let executable = URL(fileURLWithPath: "/actual/bin/simulator-mcp")
         let service = makeDoctor(
             executable: executable,
@@ -30,10 +30,21 @@ struct DoctorToolTests {
             "sdk", "java", "simulator", "screen_recording", "accessibility",
             "signature", "install_path",
         ])
-        #expect(result.checks.first { $0.name == "screen_recording" }?.fix ==
-            "Open System Settings > Privacy & Security > Screen & System Audio Recording, enable the exact executable /actual/bin/simulator-mcp, then fully restart the MCP host after changing the grant.")
-        #expect(result.checks.first { $0.name == "accessibility" }?.fix ==
-            "Open System Settings > Privacy & Security > Accessibility, enable the exact executable /actual/bin/simulator-mcp, then fully restart the MCP host after changing the grant.")
+        // Pinned by content rather than by one long literal: these are the
+        // facts a reader needs, and an assertion that says which ones survives
+        // rewording while still failing if any of them is dropped.
+        for (name, settings) in [
+            ("screen_recording", Permissions.screenSettingsPath),
+            ("accessibility", Permissions.accessibilitySettingsPath),
+        ] {
+            let fix = try #require(result.checks.first { $0.name == name }?.fix)
+            #expect(fix.contains(settings), "names the exact settings pane")
+            #expect(fix.contains("/actual/bin"), "names the directory to reveal")
+            #expect(fix.contains("simulator-mcp"), "names the executable to enable")
+            #expect(fix.contains("Command-Shift-G"), "says how to reach a hidden folder")
+            #expect(fix.contains("remove it"), "says a stale entry must be re-added")
+            #expect(fix.contains("restart the MCP host"), "says the host must restart")
+        }
         #expect(result.checks.allSatisfy { !$0.observed.isEmpty })
     }
 

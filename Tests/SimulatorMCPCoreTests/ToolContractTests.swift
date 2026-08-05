@@ -340,3 +340,72 @@ final class LineCollector: @unchecked Sendable {
         return storage
     }
 }
+
+@Suite("ToolResultFactory failure content")
+struct ToolFailureContentTests {
+    private let frame = Tool.Content.image(
+        data: Data([0x89, 0x50]).base64EncodedString(), mimeType: "image/png",
+        annotations: nil, _meta: nil)
+
+    @Test("a failure carries additional content after its envelope text")
+    func failureCarriesContent() throws {
+        let result = ToolResultFactory.failure(
+            ToolError(
+                code: "sequence_marker_timeout", message: "no marker", fix: "raise timeoutMs",
+                details: ["failedStepIndex": .int(3)]),
+            additionalContent: [frame])
+
+        #expect(result.isError == true)
+        #expect(result.content.count == 2)
+        guard case .text = result.content.first else {
+            Issue.record("the envelope text must come first")
+            return
+        }
+        guard case .image = result.content.last else {
+            Issue.record("additional content must follow it")
+            return
+        }
+    }
+
+    @Test("an omitted additionalContent leaves existing callers byte-identical")
+    func defaultIsUnchanged() throws {
+        let error = ToolError(code: "invalid_arguments", message: "bad", fix: "fix it")
+        let plain = ToolResultFactory.failure(error)
+        #expect(plain.content.count == 1)
+        #expect(plain.isError == true)
+        guard case .text(let text, _, _) = plain.content.first else {
+            Issue.record("expected one text block")
+            return
+        }
+        #expect(text.contains("invalid_arguments"))
+        #expect(!text.contains("details"))
+    }
+
+    /// The stripped-retry branch exists because arbitrary `details` might not
+    /// encode. `failedStepIndex` is a plain integer that cannot be the member
+    /// that failed, so a partial run must not lose which step it was.
+    @Test("the details-stripped retry still names the failed step")
+    func strippedRetryRetainsStepIndex() throws {
+        // A non-finite double cannot be represented in JSON, so encoding the
+        // full details fails and the retry path runs.
+        let result = ToolResultFactory.failure(
+            ToolError(
+                code: "sequence_app_exited", message: "app exited", fix: "run the app again",
+                details: [
+                    "failedStepIndex": .int(2),
+                    "unencodable": .double(.infinity),
+                ]),
+            additionalContent: [frame])
+
+        #expect(result.isError == true)
+        guard case .text(let text, _, _) = result.content.first else {
+            Issue.record("expected an envelope text block")
+            return
+        }
+        #expect(text.contains("sequence_app_exited"))
+        #expect(text.contains("failedStepIndex"))
+        #expect(!text.contains("unencodable"))
+        // Content still rides along on the retry path.
+        #expect(result.content.count == 2)
+    }
+}

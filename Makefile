@@ -43,7 +43,15 @@ install: sign
 	mv -f "$$tmp" "$(INSTALL_BINARY)"; \
 	trap - EXIT HUP INT TERM; \
 	codesign --verify --strict --verbose=2 "$(INSTALL_BINARY)"; \
-	SIM_SIGNATURE_EXECUTABLE="$(INSTALL_BINARY)" swift test --filter InstalledSignatureVerificationTests
+	SIM_SIGNATURE_EXECUTABLE="$(INSTALL_BINARY)" swift test --filter InstalledSignatureVerificationTests; \
+	printf '\n%s\n' "Installed $(INSTALL_BINARY)."; \
+	printf '%s\n' "An install can invalidate the Screen Recording and Accessibility grants,"; \
+	printf '%s\n' "though it does not always: check doctor before running a live gate."; \
+	printf '%s\n' "If either reads denied, then in System Settings > Privacy & Security >"; \
+	printf '%s\n' "Screen & System Audio Recording, and > Accessibility:"; \
+	printf '%s\n' "remove simulator-mcp if listed, then click +,"; \
+	printf '%s\n' "press Command-Shift-G, enter $(INSTALL_DIR), select simulator-mcp, enable it."; \
+	printf '%s\n' "Then restart the MCP host. Verify with doctor before running a live gate."
 
 install-host: sign
 	@set -eu; \
@@ -57,7 +65,7 @@ install-host: sign
 	/usr/bin/plutil -insert CFBundleIdentifier -string dev.simulator-mcp.host "$$plist"; \
 	/usr/bin/plutil -insert CFBundleName -string SimulatorMCPHost "$$plist"; \
 	/usr/bin/plutil -insert CFBundlePackageType -string APPL "$$plist"; \
-	/usr/bin/plutil -insert CFBundleShortVersionString -string 0.3.2 "$$plist"; \
+	/usr/bin/plutil -insert CFBundleShortVersionString -string 0.4.0 "$$plist"; \
 	/usr/bin/plutil -insert LSBackgroundOnly -bool true "$$plist"; \
 	mv -f "$$plist" "$(HOST_CONTENTS)/Info.plist"; \
 	trap - EXIT HUP INT TERM; \

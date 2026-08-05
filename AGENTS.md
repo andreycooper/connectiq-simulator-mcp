@@ -8,8 +8,8 @@ file — keep everything here.
 
 `simulator-mcp` — a Swift MCP stdio server that drives the Garmin Connect IQ
 simulator on macOS so agent CLIs can build, run, and unit-test Connect IQ
-watch apps, read their logs, take screenshots, set GPS position, and press
-watch buttons.
+watch apps, read their logs, take screenshots, set GPS position, press watch
+buttons, and script short interactions as a single atomic sequence.
 
 ## Authoritative contracts
 
@@ -80,6 +80,35 @@ heuristic, guess another constant, or skip a gate.
   No device in the family exposes a `menu` button: menu is `up` with
   `holdMs >= 1000`. All 19 share one layout group and identical key codes
   (`36/53/126/125`), measured — not inferred from key names.
+- **Sequences:** `run_sequence` scripts `press`, `screenshot` and `waitForLog`
+  steps under **one** `withOperation`, so no other lease-taking client can drive
+  the simulator part-way through an interaction. It is atomic against other MCP
+  clients, **not** against the console user — `press` posts CGEvents to the
+  frontmost app, a channel the lease does not own.
+  - A `waitForLog` baselines on `latestToken` and advances its cursor on
+    **every** poll. Both are load-bearing: `nextToken` is the last line of a
+    `limit`-bounded page, so it silently matches pre-existing lines, and a
+    cursor left in place cannot see past one page however long it waits.
+  - A matched page's remaining lines are carried forward in memory, so a second
+    marker in the same page can still satisfy a later wait. Waits are therefore
+    **ordered**: a marker printed before an already-matched one can never
+    satisfy a later wait.
+  - A marker printed **without a trailing newline is not a log line** and is
+    invisible until the app exits. `System.println` appends one.
+  - A marker proves a code path was reached, not that `onUpdate()` finished
+    drawing. For a wait to imply a completed redraw, print it from inside
+    `onUpdate()` after the draw calls.
+  - Steps run inside a 120 s budget, but `ClockSupport.withDeadline` cancels
+    cooperatively — a step that ignores cancellation runs to its own ceiling
+    (10 s + holdMs for a press, 30 s for a capture). It bounds the steps, not
+    wall clock.
+  - Step failures are **returned**, not thrown, so the captured frames survive;
+    only faults decided before any step runs throw. Cancellation is the one
+    exception: it unwinds and the frames are lost, because a cancelled call has
+    no response left to carry them.
+  - Bounds: 20 steps, 3 screenshots, 20 s of declared waits. The frame cap is
+    measured, not guessed — a simulator window PNG is ~973 KB, so each frame is
+    about a megabyte of base64 in the response.
 - **Secrets:** `SIM_DEVELOPER_KEY` points to a Connect IQ developer key
   stored **outside** this repository. No key material is ever committed.
 
@@ -89,9 +118,17 @@ heuristic, guess another constant, or skip a gate.
 - `SIM_INTEGRATION=1 swift test --filter InstalledServerIntegrationTests` —
   integration against the installed signed server (needs simulator + TCC
   grants).
+- `SIM_INTEGRATION=1 swift test --filter InstalledSequenceIntegrationTests` —
+  the `run_sequence` gate: a press whose delivery is read from the fixture's own
+  log marker, a marker that never arrives (which must still return its frames),
+  and an `allowFocus=false` refusal compared field by field against a real
+  `press_button` call.
 - `make install SIGNING_IDENTITY="simulator-mcp-local"` — release build,
-  stable-identity signing, install to `~/.simulator-mcp/bin/`. Required for
-  TCC grants to survive rebuilds; unsigned/ad-hoc builds lose grants.
+  stable-identity signing, install to `~/.simulator-mcp/bin/`. Ad-hoc and
+  unsigned builds lose their TCC grants on every rebuild. A stable identity
+  avoids that, but an install can still leave a grant reading denied: check
+  `doctor` afterwards, and if either permission is denied, remove the
+  executable from System Settings and add it again rather than toggling it.
 - `SIM_TCC_ONBOARD=1 swift test --filter InstalledServerPermissionOnboardingTests`
   — opt-in permission request through the installed server only.
 - `scripts/audit-plan.sh` — fail-closed architecture and pattern audit.

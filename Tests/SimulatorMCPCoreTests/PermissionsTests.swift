@@ -2,6 +2,52 @@ import Testing
 
 import SimulatorMCPCore
 
+@Suite("Permissions grant instructions")
+struct PermissionsGrantInstructionsTests {
+    /// The installed layout: a dot-directory, which is the case that cost a
+    /// session an hour because the picker appears not to contain the file.
+    @Test("names the hidden folder, the executable, and the re-add step")
+    func hiddenInstallDirectory() {
+        let text = Permissions.grantInstructions(
+            settingsPath: Permissions.accessibilitySettingsPath,
+            executablePath: "/Users/x/.simulator-mcp/bin/simulator-mcp")
+
+        #expect(text == "Open System Settings > Privacy & Security > Accessibility, "
+            + "click +, press Command-Shift-G, enter /Users/x/.simulator-mcp/bin "
+            + "(a hidden folder, so it is not browsable), select simulator-mcp, "
+            + "and switch it on. If simulator-mcp is already listed, remove it with - "
+            + "and add it again: an install can leave a stale entry that looks enabled "
+            + "but is not honoured. Then fully restart the MCP host.")
+    }
+
+    /// The host-app layout installs to Contents/MacOS, which is browsable.
+    /// Claiming it is hidden would be the same class of wrong fact this text
+    /// was rewritten to remove.
+    @Test("omits the hidden-folder claim when the folder is not hidden")
+    func visibleInstallDirectory() {
+        let text = Permissions.grantInstructions(
+            settingsPath: Permissions.screenSettingsPath,
+            executablePath: "/Users/x/Applications/Host.app/Contents/MacOS/simulator-mcp-host")
+
+        #expect(!text.contains("hidden folder"))
+        #expect(text.contains("enter /Users/x/Applications/Host.app/Contents/MacOS,"))
+        #expect(text.contains("select simulator-mcp-host"))
+        #expect(text.contains("Command-Shift-G"))
+    }
+
+    @Test("every fix that reports a denial is non-empty and actionable")
+    func alwaysActionable() {
+        for path in ["/a/.hidden/bin/tool", "/a/visible/tool"] {
+            let text = Permissions.grantInstructions(
+                settingsPath: Permissions.screenSettingsPath, executablePath: path)
+            #expect(!text.isEmpty)
+            #expect(text.contains("Command-Shift-G"))
+            #expect(text.contains("remove it with -"))
+            #expect(text.contains("restart the MCP host"))
+        }
+    }
+}
+
 @Suite("Permissions")
 struct PermissionsTests {
     @Test("preflight-only diagnosis never invokes permission request APIs")

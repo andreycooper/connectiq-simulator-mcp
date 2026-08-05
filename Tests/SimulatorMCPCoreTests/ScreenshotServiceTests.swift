@@ -28,9 +28,14 @@ struct ScreenshotServiceTests {
             _ = try await capturer.captureWindow(pid: 42)
         } catch let error as ToolError {
             #expect(error.code == "screen_recording_denied")
-            #expect(error.fix.contains("doctor with requestPermissions=true"))
             #expect(error.fix.contains(Permissions.screenSettingsPath))
-            #expect(error.fix.contains("restart"))
+            // That the shared instructions are used at all. Their exact content
+            // is pinned in PermissionsGrantInstructionsTests with fixed inputs;
+            // asserting it here would only re-derive whatever executable is
+            // running, which under `swift test` is the test helper.
+            #expect(error.fix.contains("Command-Shift-G"))
+            #expect(error.fix.contains("remove it with -"))
+            #expect(error.fix.contains("restart the MCP host"))
         } catch {
             Issue.record("unexpected error: \(error)")
         }

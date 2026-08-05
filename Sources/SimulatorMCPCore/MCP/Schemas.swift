@@ -317,6 +317,38 @@ public enum Schemas {
         required: ["button", "pressType", "transport", "simulatorPid"]
     )
 
+    /// One flat outcome record with per-kind nullable columns, the idiom
+    /// `diagnostics` and `perTest` already use. Frame bytes are not here: they
+    /// travel as `image` content blocks, and `index`/`label` correlate them.
+    public static let runSequenceResult: Value = object(
+        properties: [
+            "sessionId": nullable(integer),
+            "steps": array(
+                of: object(
+                    properties: [
+                        "index": integer,
+                        "kind": stringEnum(["press", "screenshot", "waitForLog"]),
+                        "status": stringEnum(["completed", "failed", "skipped"]),
+                        "label": nullable(string),
+                        "button": nullable(string),
+                        "pressType": nullable(string),
+                        "transport": nullable(string),
+                        "waitedMs": nullable(integer),
+                        "linesScanned": nullable(integer),
+                        "path": nullable(string),
+                        "width": nullable(integer),
+                        "height": nullable(integer),
+                    ],
+                    required: [
+                        "index", "kind", "status", "label", "button", "pressType", "transport",
+                        "waitedMs", "linesScanned", "path", "width", "height",
+                    ]
+                )),
+            "frameCount": integer,
+        ],
+        required: ["sessionId", "steps", "frameCount"]
+    )
+
     public static let setGpsPositionResult: Value = object(
         properties: [
             "latitude": number,

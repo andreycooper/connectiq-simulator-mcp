@@ -7,12 +7,13 @@ import Testing
 
 @Suite("ButtonInput")
 struct ButtonInputTests {
-    @Test("the public surface registers press_button")
+    @Test("the public surface registers press_button and run_sequence")
     func publicToolSurface() throws {
         let published = try ToolHandlers.live().map(\.definition.name).sorted()
         #expect(published == [
             "build", "doctor", "get_logs", "list_devices", "list_sdks", "press_button", "run_app",
-            "run_tests", "screenshot", "set_gps_position", "sim_start", "sim_status", "sim_stop",
+            "run_sequence", "run_tests", "screenshot", "set_gps_position", "sim_start",
+            "sim_status", "sim_stop",
         ])
     }
 
@@ -1158,8 +1159,12 @@ struct ButtonInputTests {
 
     @Test("transport error families become stable errors without raw public interpolation")
     func translatedErrors() async throws {
-        let cases: [(ButtonInputTransportError, String, String, String)] = [
-            (.accessibilityDenied("secret"), "accessibility_denied", "Accessibility permission denied button delivery.", "Grant Accessibility permission to simulator-mcp, then retry."),
+        // A nil fix means "assert the shared grant instructions by content":
+        // comparing against Permissions.grantInstructions(...) would be f(x)==f(x)
+        // and would pass even if it returned the empty string, which AGENTS.md
+        // forbids.
+        let cases: [(ButtonInputTransportError, String, String, String?)] = [
+            (.accessibilityDenied("secret"), "accessibility_denied", "Accessibility permission denied button delivery.", nil),
             (.accessibility("secret"), "input_delivery_failed", "The input transport could not deliver the button.", "Restart the simulator, verify the selected input profile and Accessibility state, then retry."),
             (.subprocess("secret"), "input_delivery_failed", "The input transport could not deliver the button.", "Restart the simulator, verify the selected input profile and Accessibility state, then retry."),
             (.workspaceActivation("secret"), "input_delivery_failed", "The input transport could not deliver the button.", "sim_stop -> sim_start -> run_app -> press_button(allowFocus=true)"),
@@ -1171,7 +1176,15 @@ struct ButtonInputTests {
             let error = await #expect(throws: ToolError.self) { try await service.press(PressButtonToolRequest(button: "up")) }
             #expect(error?.code == code)
             #expect(error?.message == message)
-            #expect(error?.fix == fix)
+            if let fix {
+                #expect(error?.fix == fix)
+            } else {
+                let actual = error?.fix ?? ""
+                #expect(actual.contains(Permissions.accessibilitySettingsPath))
+                #expect(actual.contains("Command-Shift-G"))
+                #expect(actual.contains("remove it"))
+                #expect(actual.contains("restart the MCP host"))
+            }
             // Attribution carries stable, enumerated values only. The raw
             // transport payload must never reach a public error.
             #expect(error?.details?["button"] == .string("up"))

@@ -696,7 +696,9 @@ public struct ButtonInputService: Sendable {
         ToolError(
             code: "accessibility_denied",
             message: "Accessibility permission denied button delivery.",
-            fix: "Grant Accessibility permission to simulator-mcp, then retry.",
+            fix: Permissions.grantInstructions(
+                settingsPath: Permissions.accessibilitySettingsPath,
+                executablePath: SignatureInspector.currentExecutableURL().path),
             details: details)
     }
 
