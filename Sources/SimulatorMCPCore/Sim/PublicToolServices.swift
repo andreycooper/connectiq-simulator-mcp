@@ -22,8 +22,7 @@ extension ToolHandlerServices {
     /// is throwing and never falls back to the immutable v1 service surface.
     public static func qualificationCandidate() throws -> ToolHandlerServices {
         let qualified = try InputProfileLoader.loadQualificationCandidates()
-        guard let primary = qualified.min(by: { $0.profile.core.device < $1.profile.core.device })
-        else {
+        guard !qualified.isEmpty else {
             throw InputProfileValidationError.malformed("no qualification profile is shipped")
         }
         let composition = liveComposition(capabilities: try InputCapabilityRegistry(qualified))
@@ -46,7 +45,7 @@ extension ToolHandlerServices {
             buttonDevices: devices,
             deviceCatalog: composition.deviceCatalog)
         return try composition.services.qualification(
-            profile: primary,
+            profiles: qualified,
             runSequence: { try await sequence.run($0) }
         ) {
             try await buttonService.press($0)

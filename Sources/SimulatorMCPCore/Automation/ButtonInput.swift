@@ -498,22 +498,46 @@ public enum InputProfileLoader {
     private static func malformed(_ message: String) -> InputProfileValidationError { .malformed(message) }
 }
 
+/// The union of every profile's button order, in first-seen order.
+///
+/// A gate that runs before the target device is known can only be a permissive
+/// superset. Narrowing it to one device's list makes the verdict depend on
+/// which device id happens to sort first, and rejects buttons another device
+/// verifiably supports. Authoritative narrowing is per device, once
+/// `currentDevice` is known.
+func orderedButtonUnion(_ buttonOrders: [[String]]) -> [String] {
+    var seen: Set<String> = []
+    return buttonOrders.flatMap { $0 }.filter { seen.insert($0).inserted }
+}
+
 /// Qualification-only defense-in-depth around the final request shape.
 public struct QualificationButtonService: Sendable {
-    private let profile: InputProfile
+    private let isQualification: Bool
+    /// Union across every qualified profile — see `orderedButtonUnion`.
+    private let advertisedButtons: [String]
     private let dispatch: @Sendable (PressButtonToolRequest) async throws -> PressButtonResult
 
     public init(
         profile: QualifiedInputProfile,
         dispatch: @escaping @Sendable (PressButtonToolRequest) async throws -> PressButtonResult
     ) {
-        self.profile = profile.profile
+        self.init(profiles: [profile], dispatch: dispatch)
+    }
+
+    public init(
+        profiles: [QualifiedInputProfile],
+        dispatch: @escaping @Sendable (PressButtonToolRequest) async throws -> PressButtonResult
+    ) {
+        // Fail closed: one non-qualification profile disqualifies the set.
+        self.isQualification = !profiles.isEmpty
+            && profiles.allSatisfy { $0.profile.core.qualification }
+        self.advertisedButtons = orderedButtonUnion(profiles.map(\.profile.core.buttonOrder))
         self.dispatch = dispatch
     }
 
     public func press(_ request: PressButtonToolRequest) async throws -> PressButtonResult {
-        guard profile.core.qualification, profile.core.buttonOrder.contains(request.button) else {
-            throw ToolError(code: "invalid_arguments", message: "Unknown button '\(request.button)'.", fix: "Use one of: \(profile.core.buttonOrder.joined(separator: ", ")).")
+        guard isQualification, advertisedButtons.contains(request.button) else {
+            throw ToolError(code: "invalid_arguments", message: "Unknown button '\(request.button)'.", fix: "Use one of: \(advertisedButtons.joined(separator: ", ")).")
         }
         if let hold = request.holdMs, !(50...5000).contains(hold) {
             throw ToolError(code: "invalid_arguments", message: "holdMs must be between 50 and 5000 milliseconds.", fix: "Omit holdMs for a press or pass a value from 50 through 5000.")
@@ -537,8 +561,10 @@ public struct ButtonInputService: Sendable {
     private let transports: [String: [any ButtonPressing]]
     private let runner: ButtonOperationRunner
     private let clock: any Clock<Duration>
-    /// Only used to phrase the unknown-button message; every in-scope device
-    /// shares one button order today.
+    /// Gates the request before the simulator lease is taken, so a typo costs
+    /// no lease. It is the union across devices — see `orderedButtonUnion` —
+    /// never one device's list, because the target device is not known until
+    /// `currentDevice` is resolved inside the operation below.
     private let advertisedButtons: [String]
 
     public init(profile: InputProfile, transports: [any ButtonPressing], operationRunner: ButtonOperationRunner) {
@@ -564,8 +590,7 @@ public struct ButtonInputService: Sendable {
         self.transports = transports
         self.runner = operationRunner
         self.clock = clock
-        self.advertisedButtons = devices.min { $0.profile.core.device < $1.profile.core.device }?
-            .profile.core.buttonOrder ?? []
+        self.advertisedButtons = orderedButtonUnion(devices.map(\.profile.core.buttonOrder))
     }
     public func press(_ request: PressButtonToolRequest) async throws -> PressButtonResult {
         guard advertisedButtons.contains(request.button) else {

@@ -1082,6 +1082,53 @@ struct ButtonInputTests {
         #expect(mappingError?.code == "input_unsupported")
     }
 
+    /// The pre-lease gate runs before the device is known — `currentDevice` is
+    /// resolved inside the operation. A gate that cannot know the device must
+    /// therefore be a permissive superset, or it rejects buttons the targeted
+    /// device verifiably supports. Taking one device's list makes the verdict
+    /// depend on which device id happens to sort first.
+    @Test("the pre-lease button gate is the union across devices, not one device's list")
+    func preLeaseGateIsUnionAcrossDevices() async throws {
+        let base = try expectedProfile(name: "protocol")
+        // "adevice" sorts first, so its list is what the single-profile gate used.
+        let first = reButtoned(base, device: "adevice", buttonOrder: ["up"])
+        let second = reButtoned(base, device: "zdevice", buttonOrder: ["up", "enter"])
+        let fake = RecordingTransport()
+        let runner = ButtonOperationRunner { _, _, body in
+            try await body(OperationContext(
+                simulatorPid: 42, sdk: sdk("8.4.1"),
+                currentDevice: "zdevice", listeningEndpoints: []))
+        }
+        let service = ButtonInputService(
+            devices: [(first, [fake]), (second, [fake])], operationRunner: runner)
+
+        // "enter" is verified for zdevice, the device this call targets.
+        let result = try await service.press(PressButtonToolRequest(button: "enter"))
+        #expect(result.button == "enter")
+        #expect(fake.requests == [ButtonPressRequest(button: "enter", holdMs: nil)])
+
+        // The union widens the gate; it must not weaken the authoritative
+        // per-device check behind it. "esc" is in neither device's list.
+        let unknown = await #expect(throws: ToolError.self) {
+            try await service.press(PressButtonToolRequest(button: "esc"))
+        }
+        #expect(unknown?.code == "invalid_arguments")
+
+        // "up" is in both, but a device-specific rejection still has to happen
+        // per device, not against the union.
+        let deviceRunner = ButtonOperationRunner { _, _, body in
+            try await body(OperationContext(
+                simulatorPid: 42, sdk: sdk("8.4.1"),
+                currentDevice: "adevice", listeningEndpoints: []))
+        }
+        let deviceScoped = ButtonInputService(
+            devices: [(first, [fake]), (second, [fake])], operationRunner: deviceRunner)
+        let wrongForDevice = await #expect(throws: ToolError.self) {
+            try await deviceScoped.press(PressButtonToolRequest(button: "enter"))
+        }
+        #expect(wrongForDevice?.code == "input_unsupported")
+    }
+
     @Test("focus opt-in is enforced and hold is forwarded exactly")
     func focusAndHold() async throws {
         let fake = RecordingTransport(requiresFocus: true)
@@ -1305,6 +1352,23 @@ struct ButtonInputTests {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
+    }
+
+    /// Same transport and evidence, different device id and button list — the
+    /// shape a second qualified device with its own key set would have.
+    private func reButtoned(
+        _ profile: InputProfile, device: String, buttonOrder: [String]
+    ) -> InputProfile {
+        InputProfile(
+            core: InputProfileCore(
+                schemaVersion: profile.core.schemaVersion,
+                device: device,
+                profileVersion: profile.core.profileVersion,
+                qualification: profile.core.qualification,
+                buttonOrder: buttonOrder,
+                holdEncoding: profile.core.holdEncoding,
+                evidence: profile.core.evidence),
+            transport: profile.transport)
     }
 
     private func expectedProfile(name: String) throws -> InputProfile {

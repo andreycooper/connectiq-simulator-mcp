@@ -464,6 +464,40 @@ struct MonkeydoProcessLifecycleTests {
         #expect(await process.waitCount == 1)
     }
 
+    /// The same proc_listpids/snapshot race the cleanup tree walk tolerates,
+    /// on the initial-capture path. This walk is reached only when the launcher
+    /// argv was rejected, which is exactly the post-launch window where a child
+    /// is most likely to be exiting, and its own contract says it removes every
+    /// *inspectable* child. Aborting here strands the live descendants and, at
+    /// the call site, replaces the real launch failure with a cleanup error.
+    @Test("a descendant that exits between listing and inspection does not abort initial cleanup")
+    func vanishedDescendantDoesNotAbortInitialCleanup() async {
+        // 102 is listed as a child of 101 but has no snapshot: it exited in the
+        // window between the two calls. 101 is still alive and must still go.
+        let fixture = mutableCleanupFixture(includeExtra: true, uninspectable: [102])
+        let process = LifecycleRunningProcess(pid: 100)
+        let lifecycle = MonkeydoProcessLifecycle(
+            processRunner: LifecycleRunner(process: process),
+            identityReader: fixture.runtime,
+            signalSender: fixture.runtime,
+            serverPID: 500)
+
+        let error = await #expect(throws: ToolError.self) {
+            _ = try await lifecycle.launchApp(MonkeydoCommand(
+                sdk: sampleSdk(), prgPath: URL(fileURLWithPath: "/tmp/other.prg"),
+                device: "fenix6xpro", testFilter: nil))
+        }
+
+        // The caller must still see why the launch failed. `try await
+        // cleanup.value` runs before the original error is rethrown, so an
+        // aborted cleanup silently substitutes its own error for it.
+        #expect(error?.code == "app_launch_failed")
+        #expect(fixture.runtime.values.map(\.pid) == [101])
+        #expect(fixture.runtime.contains(pid: 101) == false)
+        #expect(await process.terminationCount == 1)
+        #expect(await process.waitCount == 1)
+    }
+
     @Test("natural observation and termination share one process drain")
     func observationAndTerminationDrainExactlyOnce() async throws {
         let fixture = cleanupFixture(groupPIDs: [100, 101, 102])

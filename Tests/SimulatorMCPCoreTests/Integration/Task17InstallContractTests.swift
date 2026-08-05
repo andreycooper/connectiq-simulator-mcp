@@ -35,18 +35,18 @@ struct Task17InstallContractTests {
         // selector that can silently swap the served tool surface.
         #expect(!main.contains("SIM_BUTTON_QUALIFICATION"))
         #expect(!main.contains("qualificationCandidate"))
-        #expect(main.contains("version: \"0.4.0\""))
+        #expect(main.contains("version: \"0.4.1\""))
     }
 
-    @Test("v0.4.0 release metadata is consistent across bootstrap and packaging")
+    @Test("v0.4.1 release metadata is consistent across bootstrap and packaging")
     func releaseMetadata() throws {
         let main = try source("Sources/SimulatorMCP/main.swift")
         let makefile = try source("Makefile")
 
-        #expect(main.contains("version: \"0.4.0\""))
+        #expect(main.contains("version: \"0.4.1\""))
         #expect(makefile.contains(
-            "/usr/bin/plutil -insert CFBundleShortVersionString -string 0.4.0"))
-        #expect(!main.contains("0.3.2"))
+            "/usr/bin/plutil -insert CFBundleShortVersionString -string 0.4.1"))
+        #expect(!main.contains("0.4.0"))
     }
 
     @Test("identity creation uses a persistent code-signing certificate")

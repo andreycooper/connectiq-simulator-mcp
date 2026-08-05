@@ -65,7 +65,7 @@ install-host: sign
 	/usr/bin/plutil -insert CFBundleIdentifier -string dev.simulator-mcp.host "$$plist"; \
 	/usr/bin/plutil -insert CFBundleName -string SimulatorMCPHost "$$plist"; \
 	/usr/bin/plutil -insert CFBundlePackageType -string APPL "$$plist"; \
-	/usr/bin/plutil -insert CFBundleShortVersionString -string 0.4.0 "$$plist"; \
+	/usr/bin/plutil -insert CFBundleShortVersionString -string 0.4.1 "$$plist"; \
 	/usr/bin/plutil -insert LSBackgroundOnly -bool true "$$plist"; \
 	mv -f "$$plist" "$(HOST_CONTENTS)/Info.plist"; \
 	trap - EXIT HUP INT TERM; \

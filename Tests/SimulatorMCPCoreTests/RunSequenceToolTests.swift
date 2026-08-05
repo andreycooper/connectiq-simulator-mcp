@@ -288,7 +288,7 @@ private func withSequenceHarness(
             await recorder.record(request)
             return outcome
         }
-    ).qualification(profile: try InputProfileLoader.loadQualificationCandidate()) { _ in
+    ).qualification(profiles: [try InputProfileLoader.loadQualificationCandidate()]) { _ in
         throw unusedService()
     }
     try await withMCPHarness(handlers: ToolHandlers.qualificationConfigured(services)) { harness in

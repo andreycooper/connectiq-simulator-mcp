@@ -158,12 +158,14 @@ public struct ToolHandlerServices: Sendable {
 
     /// Returns a copy whose extra service remains private to candidate wiring.
     public func qualification(
-        profile: QualifiedInputProfile? = nil,
+        profiles: [QualifiedInputProfile]? = nil,
         runSequence: (@Sendable (RunSequenceToolRequest) async throws -> SequenceRun)? = nil,
         pressButton: @escaping @Sendable (PressButtonToolRequest) async throws -> PressButtonResult
     ) throws -> ToolHandlerServices {
-        let qualified = try profile ?? InputProfileLoader.loadQualificationCandidate()
-        let service = QualificationButtonService(profile: qualified, dispatch: pressButton)
+        // Every qualified profile, not one of them: this gate runs before the
+        // target device is known, so it must not narrow to a single device.
+        let qualified = try profiles ?? InputProfileLoader.loadQualificationCandidates()
+        let service = QualificationButtonService(profiles: qualified, dispatch: pressButton)
         return ToolHandlerServices(
             listSdks: listSdks, listDevices: listDevices, build: build, simStart: simStart,
             simStop: simStop, simStatus: simStatus, runApp: runApp, runTests: runTests,

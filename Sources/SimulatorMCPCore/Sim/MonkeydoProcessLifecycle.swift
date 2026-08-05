@@ -287,9 +287,19 @@ public struct MonkeydoProcessLifecycle: MonkeydoProcessLifecycling, Sendable {
         _ = try await owned.output()
     }
 
-    /// Returns the exact dedicated group snapshot that authorizes a negative
-    /// PGID signal. Tree and group captures must agree on every full identity,
-    /// not merely on their PID sets.
+    /// Returns the dedicated group snapshot that authorizes a negative PGID
+    /// signal, or nil when the group is not provably ours.
+    ///
+    /// Membership is NOT required to match between the tree and group captures:
+    /// a child reparented to PID 1 leaves the parentage walk permanently while
+    /// staying in the group, so they legitimately differ. What is required is
+    /// that every group member is accounted for — either present in the tree
+    /// with a byte-identical full identity (not merely the same PID), or
+    /// recorded in the group the connection probe verified at accept time. An
+    /// unaccounted member returns nil rather than throwing: a group signal
+    /// reaches every member at once, so one unverifiable member makes the whole
+    /// group unsafe to signal, and the caller falls back to signalling
+    /// individually.
     private func exactDedicatedGroup(
         _ owned: OwnedMonkeydoProcess
     ) throws -> [Int32: ProcessIdentitySnapshot]? {
@@ -871,10 +881,15 @@ public struct MonkeydoProcessLifecycle: MonkeydoProcessLifecycling, Sendable {
                 guard visited.insert(pid).inserted else {
                     throw cleanupError("the initial descendant graph contained PID \(pid) twice")
                 }
-                guard let child = try identityReader.snapshot(pid: pid) else {
-                    throw cleanupError(
-                        "kernel-listed initial child PID \(pid) could not be identity-inspected")
-                }
+                // Same non-atomic proc_listpids/snapshot window as the cleanup
+                // tree walk above, and the same verdict: a descendant that
+                // exited between the two calls is gone, there is nothing left
+                // to signal, and aborting stranded every process this walk had
+                // not reached yet — including the wrapper, which is drained
+                // only after the walk completes. Skipping is conservative: an
+                // inspectable PID that is not ours still fails the parent check
+                // below.
+                guard let child = try identityReader.snapshot(pid: pid) else { continue }
                 guard child.parentPid == parent.pid else {
                     throw cleanupError(
                         "initial child PID \(pid) changed parent before cleanup")
