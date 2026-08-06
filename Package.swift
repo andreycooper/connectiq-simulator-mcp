@@ -5,7 +5,8 @@ let package = Package(
     name: "simulator-mcp",
     platforms: [.macOS(.v14)],
     products: [
-        .executable(name: "simulator-mcp", targets: ["SimulatorMCP"])
+        .executable(name: "simulator-mcp", targets: ["SimulatorMCP"]),
+        .executable(name: "simulator-mcp-menu", targets: ["SimulatorMenu"])
     ],
     dependencies: [
         .package(
@@ -25,6 +26,10 @@ let package = Package(
                 "SimulatorMCPCore",
                 .product(name: "MCP", package: "swift-sdk")
             ]
+        ),
+        .executableTarget(
+            name: "SimulatorMenu",
+            dependencies: ["SimulatorMCPCore"]
         ),
         // Test-only fixture. Deliberately not a package product, and placed
         // outside Sources/ so it stays clear of the architecture boundary.

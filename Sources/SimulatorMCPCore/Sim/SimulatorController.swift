@@ -222,6 +222,7 @@ public actor SimulatorController {
     private let queue: AsyncFIFO
     private let lease: SimLease
     private let runtimeStore: RuntimeStore
+    private let activityStore: ActivityStore
     private let sessionStopper: any SimulatorSessionStopping
     private let system: SimulatorProcessSystem
     private let readinessProbe: SimulatorReadinessProbe
@@ -246,13 +247,15 @@ public actor SimulatorController {
         runtimeStore: RuntimeStore,
         processRunner: any ProcessRunning,
         sessionStopper: any SimulatorSessionStopping,
-        monkeydoLifecycle: (any MonkeydoProcessLifecycling)? = nil
+        monkeydoLifecycle: (any MonkeydoProcessLifecycling)? = nil,
+        activityStore: ActivityStore = .standard
     ) {
         let system = SimulatorProcessSystem.live(processRunner: processRunner)
         let clock = ContinuousClock()
         self.queue = queue
         self.lease = lease
         self.runtimeStore = runtimeStore
+        self.activityStore = activityStore
         self.sessionStopper = sessionStopper
         self.system = system
         self.readinessProbe = SimulatorReadinessProbe(
@@ -272,11 +275,13 @@ public actor SimulatorController {
         system: SimulatorProcessSystem,
         readinessProbe: SimulatorReadinessProbe,
         clock: C,
-        monkeydoLifecycle: (any MonkeydoProcessLifecycling)? = nil
+        monkeydoLifecycle: (any MonkeydoProcessLifecycling)? = nil,
+        activityStore: ActivityStore = .disabled
     ) where C.Duration == Duration {
         self.queue = queue
         self.lease = lease
         self.runtimeStore = runtimeStore
+        self.activityStore = activityStore
         self.sessionStopper = sessionStopper
         self.system = system
         self.readinessProbe = readinessProbe
@@ -293,12 +298,14 @@ public actor SimulatorController {
         sessionStopper: any SimulatorSessionStopping,
         system: SimulatorProcessSystem,
         readinessProbe: SimulatorReadinessProbe,
-        monkeydoLifecycle: (any MonkeydoProcessLifecycling)? = nil
+        monkeydoLifecycle: (any MonkeydoProcessLifecycling)? = nil,
+        activityStore: ActivityStore = .disabled
     ) {
         let clock = ContinuousClock()
         self.queue = queue
         self.lease = lease
         self.runtimeStore = runtimeStore
+        self.activityStore = activityStore
         self.sessionStopper = sessionStopper
         self.system = system
         self.readinessProbe = readinessProbe
@@ -323,12 +330,27 @@ public actor SimulatorController {
         return try await queue.withLock(operation: operation.rawValue, timeout: queueTimeout) {
             let token = try await self.lease.acquire(
                 operation: operation.rawValue, timeout: leaseTimeout)
+            self.activityStore.publish(operation: operation.rawValue, startedAt: Date())
+
+            // `clear` sits outside the do/catch on purpose. `LeaseToken`'s
+            // release path unlocks the flock even when it throws, so a `clear`
+            // placed in a catch that also encloses `release()` would run after
+            // the lease was gone and could erase a record the next holder had
+            // already published.
+            let outcome: Result<T, Error>
             do {
-                let value = try await self.perform(
-                    operation, requirement: requirement, body: body)
+                outcome = .success(
+                    try await self.perform(operation, requirement: requirement, body: body))
+            } catch {
+                outcome = .failure(error)
+            }
+            self.activityStore.clear()
+
+            switch outcome {
+            case .success(let value):
                 try token.release()
                 return value
-            } catch {
+            case .failure(let error):
                 try? token.release()
                 throw error
             }

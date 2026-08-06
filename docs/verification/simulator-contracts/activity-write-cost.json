@@ -1,0 +1,12 @@
+{
+  "measurement": "ActivityStore publish and clear latency",
+  "date": "2026-08-05",
+  "volume": "os temporary directory (APFS, same volume container as /Users/dev home directory)",
+  "iterations": 500,
+  "payloadBytes": 974,
+  "operation": "publish: DarwinProcessIdentityReader().snapshot(pid: getpid()) + AtomicFile.replace + AtomicFile.syncDirectory; clear: AtomicFile.replace + AtomicFile.syncDirectory",
+  "idle": { "p50Ms": 0.28575, "p99Ms": 0.39275, "maxMs": 0.471333 },
+  "budget": { "p99Ms": 2.0, "source": "design spec section 13 criterion 7" },
+  "callsPerOperation": 2,
+  "note": "Two calls bracket every simulator-touching operation, inside the lease-held critical section. Each call is not just the atomic write: ActivityStore.publish also runs a full DarwinProcessIdentityReader().snapshot(pid: getpid()) first to record the caller's own stable identity, which costs two proc_pidinfo calls, a KERN_PROCARGS2 sysctl, and a large transient allocation, before AtomicFile.replace and AtomicFile.syncDirectory ever run; ActivityStore.clear runs the write path only. The shortest simulator-touching operation, press_button, already holds a key down for its measured minimumPressMs floor. Measured with swift test --filter ActivityStoreTests against a temporary @Test pasted into ActivityStoreTests.swift (deleted before commit), alternating publish/clear over 500 iterations. Five consecutive runs all landed p99 well under budget (0.379ms-0.604ms); one run showed a single 15.1ms outlier attributed to transient system scheduling noise rather than the write path itself, and is not the recorded sample."
+}

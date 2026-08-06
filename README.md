@@ -255,6 +255,32 @@ budget across the run. The frame cap is small on purpose — a simulator window
 PNG measures ~973 KB, so every frame is roughly a megabyte of base64 in the
 response.
 
+## Status bar monitor
+
+`make install-menu` installs `simulator-mcp-menu`, a read-only status bar icon
+showing whether an agent is currently driving the simulator. States are
+distinguished by shape, not colour — `NSStatusBarButton.contentTintColor`
+measured inert on this machine — using an `applewatch.*` SF Symbol family:
+`applewatch.slash` for no simulator, `applewatch` for idle,
+`applewatch.radiowaves.left.and.right` for driving, and
+`exclamationmark.applewatch` when the state cannot be determined.
+
+Three things to know:
+
+- **The icon is a strong hint, not a mutex.** It polls every 250 ms, so it can
+  lag the start of an operation by up to that long. A process probe retry adds
+  to that same poll's resolve latency — it loops *within* the poll, so it
+  never costs a second poll interval.
+- **Avoid opening the menu during a sequence.** An open menu takes keyboard
+  focus, and `press_button` delivers keys to the frontmost application — so
+  opening it mid-sequence can silently swallow a press. The icon is designed to
+  answer "is an agent driving?" without being clicked.
+- **Reveal is disabled while an agent is driving**, because activating Finder
+  would take focus away from the simulator for the same reason.
+
+The monitor takes no lease, spawns no processes, and needs no Screen Recording
+or Accessibility grant.
+
 ## Build and test
 
 Unit tests need no simulator or TCC grant:

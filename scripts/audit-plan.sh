@@ -71,6 +71,17 @@ check_absent \
     "$handler_platform_apis" \
     Sources/SimulatorMCPCore/MCP/ToolHandlers.swift
 
+cg_window_list_create_image='CGWindowListCreate''Image'
+cg_display_stream='CGDisplay''Stream'
+ns_event_global_monitor='NSEvent\.addGlobal''MonitorForEvents'
+posix_spawn='posix_''spawn'
+ns_apple_script='NSApple''Script'
+menu_forbidden="$cg_event|$screen_capture_kit|$ax_ui_element|Foundation\.Process|ProcessInfo\.processInfo\.arguments|$cg_window_list_create_image|$cg_display_stream|$ns_event_global_monitor|$posix_spawn|$ns_apple_script"
+check_absent \
+    "platform APIs and subprocesses inside the status bar target" \
+    "$menu_forbidden" \
+    Sources/SimulatorMenu
+
 # Every compiled-in qualified device must have both a shipped profile resource
 # and its own measured delivery contract, and the two must agree on the SDK set.
 # Fail-closed in both directions: a device without evidence, and evidence

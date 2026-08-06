@@ -112,6 +112,49 @@ heuristic, guess another constant, or skip a gate.
 - **Secrets:** `SIM_DEVELOPER_KEY` points to a Connect IQ developer key
   stored **outside** this repository. No key material is ever committed.
 
+## Tool rules that surprise callers
+
+Every tool's arguments and result shape are in README.md. This section is only
+for behavior a caller gets wrong by reasonable assumption.
+
+- **`get_logs` returns two cursors, and picking the wrong one silently
+  misreads the log.** `nextToken` resumes pagination from the last line
+  *returned*, so on a page bounded by `limit` it points into the middle of the
+  buffer. To establish a "from now on" baseline — waiting for a line the app has
+  not printed yet — use `latestToken`, the cursor at the newest line currently
+  buffered. Baselining on `nextToken` instead matches lines that were already
+  there. The two are equal exactly when the caller has consumed everything
+  buffered. `droppedLines` counts lines the ring buffer overwrote: they are
+  lost, not deferred. And a marker printed **without a trailing newline is not
+  yet a log line** — it stays invisible until the app exits. `System.println`
+  appends one.
+- **`run_app` and `run_tests` do not trust the child's exit code.** monkeydo's
+  is unreliable (SDK regex bug), so `run_tests` totals and per-test results come
+  from parsing the transcript. Ownership is established only after an exact
+  launcher connection is verified, never from the spawn succeeding. Cleanup
+  fails closed: when it cannot verify every member of the owned process group it
+  refuses to signal rather than signalling something it has not proven is ours.
+- **`sim_status` is the only simulator tool that does not take the lease.** It
+  reports the current holder, so it is safe to poll while another client is
+  mid-operation — every other simulator-touching tool queues behind that lease.
+  `sim_start` against a running *different* SDK returns `sdk_mismatch` rather
+  than restarting the simulator; stop it with `sim_stop` first. Because cleanup
+  fails closed, `sim_stop` is also the recovery path: a tree that a refused
+  cleanup left running is reclaimed by the next successful `sim_stop`.
+- **`list_devices` reports input capability from the compiled allowlist, never
+  from device JSON.** A device whose hardware has the keys still reports
+  `inputSupported=false`, `buttons=[]` and `inputProfile=null` unless it is one
+  of the 19 qualified profiles. Device JSON describes hardware; it is never
+  proof of an automation transport.
+- **`list_sdks` reports which SDK would be resolved, and why.** Precedence is
+  explicit parameter → `CIQ_SDK` → `current-sdk.cfg` → newest installed by
+  parsed semver, so the active SDK can differ from the newest one present.
+- **`set_gps_position` drives the simulator's own GUI.** It automates
+  Settings → Set Position through Accessibility, so it needs a running
+  simulator and the Accessibility grant — not just a launched app. Coordinates
+  are decimal degrees. The contract was verified with the watch app observing
+  the result by polling `Position.getInfo()`.
+
 ## Commands
 
 - `swift build` / `swift test` — unit tests; no simulator or TCC needed.
@@ -132,6 +175,9 @@ heuristic, guess another constant, or skip a gate.
 - `SIM_TCC_ONBOARD=1 swift test --filter InstalledServerPermissionOnboardingTests`
   — opt-in permission request through the installed server only.
 - `scripts/audit-plan.sh` — fail-closed architecture and pattern audit.
+- `make install-menu` — builds and installs `simulator-mcp-menu`, the status
+  bar monitor, beside the server and writes a LaunchAgent plist. The monitor
+  needs no TCC grant.
 
 The integration command requires the external `SIM_DEVELOPER_KEY` path and
 both TCC grants (Screen Recording, Accessibility).
@@ -184,6 +230,14 @@ All names above are under `docs/verification/simulator-contracts/`.
 - `Tests/fixtures/` — deterministic Connect IQ fixture apps; integration
   asserts on app-owned pixels/log markers, never PNG size, non-blank frames,
   or whole-image inequality.
+- `Sources/SimulatorMenu/` — a second, optional executable: a read-only macOS
+  status bar monitor that shows whether an agent is currently driving the
+  simulator. It may call only `ActivityStore.read`, `RuntimeStore.read`,
+  `MonitorStateResolver`, `ProcessPresence`, and
+  `DarwinProcessIdentityReader`. It must not construct `Foundation.Process`,
+  and must not reference CGEvent, ScreenCaptureKit, or any Accessibility
+  API — that is what keeps it out of TCC entirely. Enforced by
+  `scripts/audit-plan.sh`.
 
 ## Contributing
 
