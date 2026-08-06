@@ -699,7 +699,10 @@ public struct ButtonInputService: Sendable {
         return deliveryFailure(details: details)
     }
 
-    private func inputUnsupported(_ message: String, fix: String = "Use a device with a verified input profile.") -> ToolError {
+    private func inputUnsupported(
+        _ message: String,
+        fix: String = "Call list_devices and pick a device whose inputSupported is true for this SDK."
+    ) -> ToolError {
         ToolError(code: "input_unsupported", message: message, fix: fix)
     }
     private func focusRequired() -> ToolError {

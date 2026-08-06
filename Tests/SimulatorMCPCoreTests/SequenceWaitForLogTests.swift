@@ -160,7 +160,7 @@ struct SequenceWaitForLogTests {
                 await leases.record()
                 return try await body(waitTestContext())
             },
-            capture: { _ in Issue.record("no step may run"); throw ToolError(
+            capture: { _, _ in Issue.record("no step may run"); throw ToolError(
                 code: "internal_error", message: "unreachable", fix: "unreachable") },
             press: { _, _ in Issue.record("no step may run"); throw ToolError(
                 code: "internal_error", message: "unreachable", fix: "unreachable") },
@@ -231,11 +231,13 @@ private struct WaitHarness: Sendable {
         let logCalls = self.logCalls
         return SequenceService(
             operationRunner: .immediate(context: waitTestContext()),
-            capture: { _ in
+            capture: { _, _ in
                 ScreenshotOutput(
                     result: ScreenshotResult(
                         path: "/tmp/simulator-mcp/frame.png", mimeType: "image/png",
-                        width: 454, height: 454, capturedPid: 4_242, appDisplayRect: nil),
+                        width: 454, height: 454, capturedPid: 4_242,
+                        device: nil, deviceDisplayName: nil, nativeResolution: nil,
+                        appDisplayRect: nil),
                     png: Data([0x89, 0x50, 0x4E, 0x47]))
             },
             press: { request, _ in

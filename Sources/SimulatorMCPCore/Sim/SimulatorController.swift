@@ -24,6 +24,11 @@ public enum OperationRequirement: Sendable {
 public struct OperationContext: Sendable {
     public let simulatorPid: Int32
     public let sdk: SdkInfo
+    /// The last device someone *asked for* — never an observation. Renaming
+    /// this field is a migration (it threads through `ScreenshotService` and
+    /// `ButtonInput`), deliberately deferred; see the 2026-08-06
+    /// device-and-capture-trust spec's §10 and `SimulatorController`'s
+    /// `requestedDevice`, which is what actually backs this value.
     public let currentDevice: String?
     public let listeningEndpoints: Set<TCPEndpoint>
 
@@ -227,6 +232,7 @@ public actor SimulatorController {
     private let system: SimulatorProcessSystem
     private let readinessProbe: SimulatorReadinessProbe
     private let monkeydoLifecycle: any MonkeydoProcessLifecycling
+    private let deviceReadback: any DeviceObserving
     private let ownerServerInstance = UUID()
     private let makeDeadline: @Sendable (Duration) -> ClockDeadline
 
@@ -234,7 +240,12 @@ public actor SimulatorController {
     private var activeOperation: SimOperation?
     private var currentIdentity: SimulatorProcessIdentity?
     private var currentEndpoints = Set<TCPEndpoint>()
-    private var currentDevice: String?
+    /// The last device someone *asked for* — via `setCurrentDevice`,
+    /// `publishActiveMonkeydo`, or restored from the persisted runtime
+    /// record. Not an observation: `status()` reports this as
+    /// `requestedDevice`, and derives `currentDevice` (observed) separately
+    /// from `deviceReadback`. See the design's §6.3.
+    private var requestedDevice: String?
     private var stableReadyObservation: SimulatorReadyObservation?
     private var pendingReadyObservation: SimulatorReadyObservation?
     private var pendingReadyDeadline: ClockDeadline?
@@ -248,7 +259,8 @@ public actor SimulatorController {
         processRunner: any ProcessRunning,
         sessionStopper: any SimulatorSessionStopping,
         monkeydoLifecycle: (any MonkeydoProcessLifecycling)? = nil,
-        activityStore: ActivityStore = .standard
+        activityStore: ActivityStore = .standard,
+        deviceReadback: any DeviceObserving = DeviceReadback()
     ) {
         let system = SimulatorProcessSystem.live(processRunner: processRunner)
         let clock = ContinuousClock()
@@ -263,6 +275,7 @@ public actor SimulatorController {
             identityLookup: system.lookup)
         self.monkeydoLifecycle = monkeydoLifecycle
             ?? MonkeydoProcessLifecycle(processRunner: processRunner)
+        self.deviceReadback = deviceReadback
         self.makeDeadline = { ClockDeadline(clock: clock, timeout: $0) }
     }
 
@@ -276,7 +289,8 @@ public actor SimulatorController {
         readinessProbe: SimulatorReadinessProbe,
         clock: C,
         monkeydoLifecycle: (any MonkeydoProcessLifecycling)? = nil,
-        activityStore: ActivityStore = .disabled
+        activityStore: ActivityStore = .disabled,
+        deviceReadback: any DeviceObserving = DeviceReadback()
     ) where C.Duration == Duration {
         self.queue = queue
         self.lease = lease
@@ -287,6 +301,7 @@ public actor SimulatorController {
         self.readinessProbe = readinessProbe
         self.monkeydoLifecycle = monkeydoLifecycle
             ?? MonkeydoProcessLifecycle(processRunner: processRunner)
+        self.deviceReadback = deviceReadback
         self.makeDeadline = { ClockDeadline(clock: clock, timeout: $0) }
     }
 
@@ -299,7 +314,8 @@ public actor SimulatorController {
         system: SimulatorProcessSystem,
         readinessProbe: SimulatorReadinessProbe,
         monkeydoLifecycle: (any MonkeydoProcessLifecycling)? = nil,
-        activityStore: ActivityStore = .disabled
+        activityStore: ActivityStore = .disabled,
+        deviceReadback: any DeviceObserving = DeviceReadback()
     ) {
         let clock = ContinuousClock()
         self.queue = queue
@@ -311,6 +327,7 @@ public actor SimulatorController {
         self.readinessProbe = readinessProbe
         self.monkeydoLifecycle = monkeydoLifecycle
             ?? MonkeydoProcessLifecycle(processRunner: processRunner)
+        self.deviceReadback = deviceReadback
         self.makeDeadline = { ClockDeadline(clock: clock, timeout: $0) }
     }
 
@@ -380,7 +397,7 @@ public actor SimulatorController {
         let identity = processes.first
 
         if identity != currentIdentity {
-            currentDevice = nil
+            requestedDevice = nil
             clearReadinessProof()
         }
         currentIdentity = identity
@@ -417,6 +434,34 @@ public actor SimulatorController {
             }
         }
 
+        // A new suspension point, guarded exactly like the ones above: an
+        // operation that starts while this readback is in flight must not
+        // have its state reported alongside a device observation taken
+        // before that operation began.
+        //
+        // `holder == nil` is required, not just `operationRequestsInFlight
+        // == 0`: the latter covers only *this* server's own in-flight
+        // operations (the early return above already handles those). A
+        // foreign holder — another process mid-`restartForDeviceChange`, say
+        // — reaches this point with `state == .busy` and no readiness probe
+        // (the branch above skips it for exactly this reason), and the
+        // readback would happily race that restart. The value it read might
+        // even be momentarily true, but it is not something a caller holding
+        // no lease can act on, so this matches `currentStatus`'s own rule
+        // rather than special-casing it: observed only when nobody — this
+        // server or another — is mid-operation.
+        var observedDevice: String?
+        if let identity, holder == nil {
+            if case .device(let deviceId, _) = await deviceReadback.observe(
+                simulatorPid: identity.pid)
+            {
+                observedDevice = deviceId
+            }
+        }
+        guard statusObservationIsCurrent(generation) else {
+            return currentStatus(holder: holder)
+        }
+
         return SimStatusResult(
             state: state,
             operation: operation,
@@ -424,7 +469,9 @@ public actor SimulatorController {
             executablePath: identity?.executablePath,
             sdkPath: identity?.sdk?.root.path,
             sdkVersion: identity?.sdk?.version.description,
-            currentDevice: currentDevice,
+            currentDevice: observedDevice,
+            requestedDevice: requestedDevice,
+            deviceSource: observedDevice == nil ? "unobserved" : "observed",
             leaseHolder: holder.map {
                 "pid=\($0.pid) operation=\($0.operation) acquiredMonotonicNanos=\($0.acquiredMonotonicNanos)"
             })
@@ -434,6 +481,21 @@ public actor SimulatorController {
         generation == statusGeneration && operationRequestsInFlight == 0
     }
 
+    /// Reports status while an operation is in flight (this actor's own, or
+    /// another holder's). Deliberately performs **no** readback: the
+    /// simulator's window may be mid-relaunch or mid-restart under the
+    /// operation that owns the lease, and a readback here would race it.
+    /// `currentDevice` is therefore always `nil` and `deviceSource` is always
+    /// `"unobserved"` — only `requestedDevice`, the stored last-asked-for
+    /// value, is reported.
+    ///
+    /// This function is reached for this server's own in-flight operations
+    /// via the early `operationRequestsInFlight == 0` guard in `status()`.
+    /// A foreign holder never reaches this function on the normal path —
+    /// `status()` runs to completion and returns its own `SimStatusResult`
+    /// — but it applies the identical rule inline, guarding its own readback
+    /// with `holder == nil`, so the two functions agree: observed only when
+    /// nobody is mid-operation, this server or another.
     private func currentStatus(holder: LeaseHolder?) -> SimStatusResult {
         var state = lifecycleState
         var operation = activeOperation?.rawValue
@@ -448,7 +510,9 @@ public actor SimulatorController {
             executablePath: currentIdentity?.executablePath,
             sdkPath: currentIdentity?.sdk?.root.path,
             sdkVersion: currentIdentity?.sdk?.version.description,
-            currentDevice: currentDevice,
+            currentDevice: nil,
+            requestedDevice: requestedDevice,
+            deviceSource: "unobserved",
             leaseHolder: holder.map {
                 "pid=\($0.pid) operation=\($0.operation) acquiredMonotonicNanos=\($0.acquiredMonotonicNanos)"
             })
@@ -469,7 +533,35 @@ public actor SimulatorController {
                 message: "Current simulator device must not be empty.",
                 fix: "Pass a device identifier returned by list_devices.")
         }
-        currentDevice = device
+        requestedDevice = device
+        try publish(identity: identity, sdk: sdk)
+    }
+
+    /// Forgets the recorded current device and republishes the runtime record
+    /// without it. Guarded exactly as `setCurrentDevice` is: only the body of
+    /// the matching active operation, while its lease is held, may change this
+    /// field.
+    ///
+    /// The inverse of `setCurrentDevice` had no caller until `run_app` learned
+    /// to disprove a device claim. `clearActiveMonkeydo(device:)` is not that
+    /// inverse — it only ever assigns a non-nil device — and `requireReady`
+    /// clears the field only when the simulator process identity changes, so
+    /// a wrong device recorded against a *live* simulator would otherwise
+    /// outlive the operation that disproved it and be read by `screenshot`
+    /// (crop rectangle) and `press_button` (key profile).
+    public func clearCurrentDevice(inside operation: SimOperation) throws {
+        // The same three conditions `setCurrentDevice` checks, and its
+        // wording: this is that method's inverse, not a runtime-ownership
+        // mutation, so it must not borrow the monkeydo phrasing.
+        guard activeOperation == operation, lifecycleState == .busy,
+            let identity = currentIdentity, let sdk = identity.sdk
+        else {
+            throw ToolError(
+                code: "invalid_simulator_state",
+                message: "Current device can only be cleared inside the active \(operation.rawValue) simulator operation.",
+                fix: "Clear the device from the matching simulator operation body while its lease is held.")
+        }
+        requestedDevice = nil
         try publish(identity: identity, sdk: sdk)
     }
 
@@ -507,7 +599,7 @@ public actor SimulatorController {
                     message: "The current simulator device must not be empty.",
                     fix: "Pass the device identifier used for this run.")
             }
-            currentDevice = device
+            requestedDevice = device
         }
         try writeRuntime(
             identity: identity,
@@ -548,7 +640,7 @@ public actor SimulatorController {
                     message: "The current simulator device must not be empty.",
                     fix: "Pass the verified device used by this run.")
             }
-            currentDevice = device
+            requestedDevice = device
         }
         try writeRuntime(identity: identity, sdk: sdk, monkeydoOwnership: nil)
     }
@@ -568,6 +660,90 @@ public actor SimulatorController {
                 message: "Simulator readiness changed while retrying monkeydo.",
                 fix: "Retry the run; if it repeats, restart the simulator first.")
         }
+    }
+
+    /// Stops the running simulator and starts a fresh one **inside** the
+    /// caller's already-held operation, returning the new process's context.
+    ///
+    /// The shutdown half mirrors `stop(body:)` step for step — session stop,
+    /// persisted monkeydo teardown, revalidate, TERM, grace, revalidate,
+    /// KILL — because a reused PID must never receive our signal. The
+    /// duplication is deliberate: `stop` also tears down lifecycle state that a
+    /// mid-operation restart must not touch, so the two cannot share a helper
+    /// without one of them losing a property. The start half mirrors
+    /// `startOrAdopt`'s launch branch.
+    ///
+    /// `lifecycleState` stays `.busy` under the caller's operation throughout:
+    /// this is one step inside their lease, never a nested `withOperation`.
+    public func restartForDeviceChange(
+        requested: SdkInfo,
+        inside operation: SimOperation
+    ) async throws -> OperationContext {
+        let (identity, sdk) = try activeOperationIdentity(operation)
+        try requireSDKMatch(running: sdk, requested: requested)
+
+        try await sessionStopper.stopForSimulatorShutdown()
+        try await terminatePersistedMonkeydoForStop(identity: identity, sdk: sdk)
+        try Task.checkCancellation()
+        let presentBeforeTERM = try await revalidateExpectedIdentity(identity)
+        try Task.checkCancellation()
+        if presentBeforeTERM {
+            try Task.checkCancellation()
+            try await system.signal(identity.pid, SIGTERM)
+        }
+        try Task.checkCancellation()
+        let presentAfterTERM = try await revalidateExpectedIdentity(identity)
+        try Task.checkCancellation()
+        if presentAfterTERM,
+            !(try await waitForExit(expected: identity, timeout: .seconds(5)))
+        {
+            try Task.checkCancellation()
+            // Revalidate again after the grace deadline and immediately
+            // before escalation. A reused PID must never receive our KILL.
+            let presentBeforeKILL = try await revalidateExpectedIdentity(identity)
+            try Task.checkCancellation()
+            if presentBeforeKILL {
+                try Task.checkCancellation()
+                try await system.signal(identity.pid, SIGKILL)
+            }
+            try Task.checkCancellation()
+            guard try await waitForExit(expected: identity, timeout: .seconds(5)) else {
+                throw ToolError(
+                    code: "simulator_stop_timeout",
+                    message: "Simulator process \(identity.pid) remained alive after SIGKILL during a device change.",
+                    fix: "Quit the simulator from Activity Monitor, then retry run_app.",
+                    details: ["pid": .int(Int(identity.pid))])
+            }
+        }
+        try Task.checkCancellation()
+
+        try runtimeStore.clear()
+        currentIdentity = nil
+        requestedDevice = nil
+        clearReadinessProof()
+
+        let launchedPID = try await system.launch(requested.simulatorApp)
+        guard let launched = try await system.lookup(launchedPID),
+            let launchedSDK = launched.sdk
+        else {
+            throw ToolError(
+                code: "simulator_launch_failed",
+                message: "The simulator relaunched for a device change could not be validated.",
+                fix: "Call sim_start — the device change already stopped the old simulator and cleared its runtime record, so no simulator is running now — then confirm doctor is clean and retry run_app.",
+                details: ["pid": .int(Int(launchedPID))])
+        }
+        try requireSDKMatch(running: launchedSDK, requested: requested)
+
+        let ready = try await readinessProbe.waitUntilReady(
+            pid: launched.pid, requested: requested, timeout: .seconds(30))
+        try Task.checkCancellation()
+        currentIdentity = ready.identity
+        recordStableProof(ready)
+        synchronizePersistedRuntime(identity: ready.identity, sdk: requested)
+        try Task.checkCancellation()
+        try publish(identity: ready.identity, sdk: requested)
+        return context(
+            identity: ready.identity, sdk: requested, endpoints: ready.listeningEndpoints)
     }
 
     private func perform<T: Sendable>(
@@ -635,7 +811,7 @@ public actor SimulatorController {
         try Task.checkCancellation()
         currentIdentity = ready.identity
         recordStableProof(ready)
-        if runtimeStore.read()?.simulatorPid != pid { currentDevice = nil }
+        if runtimeStore.read()?.simulatorPid != pid { requestedDevice = nil }
         synchronizePersistedRuntime(identity: ready.identity, sdk: requested)
         try Task.checkCancellation()
         try publish(identity: ready.identity, sdk: requested)
@@ -650,7 +826,7 @@ public actor SimulatorController {
         try requireSDKMatch(running: sdk, requested: requested)
         let ready = try await readinessProbe.waitUntilReady(
             pid: identity.pid, requested: requested, timeout: .seconds(30))
-        if currentIdentity != identity { currentDevice = nil }
+        if currentIdentity != identity { requestedDevice = nil }
         synchronizePersistedRuntime(identity: identity, sdk: sdk)
         currentIdentity = identity
         recordStableProof(ready)
@@ -687,7 +863,7 @@ public actor SimulatorController {
             try await terminatePersistedMonkeydoWithoutSimulator()
             try runtimeStore.clear()
             currentIdentity = nil
-            currentDevice = nil
+            requestedDevice = nil
             clearReadinessProof()
             lifecycleState = .notRunning
             let unavailable = SdkInfo(
@@ -740,7 +916,7 @@ public actor SimulatorController {
         let value = try await body(context)
         try runtimeStore.clear()
         currentIdentity = nil
-        currentDevice = nil
+        requestedDevice = nil
         clearReadinessProof()
         activeOperation = nil
         lifecycleState = .notRunning
@@ -835,7 +1011,7 @@ public actor SimulatorController {
             executablePath: identity.executablePath,
             sdkPath: sdk.root.path,
             sdkVersion: sdk.version.description,
-            currentDevice: currentDevice,
+            currentDevice: requestedDevice,
             monkeydoOwnership: monkeydoOwnership))
     }
 
@@ -926,7 +1102,7 @@ public actor SimulatorController {
         OperationContext(
             simulatorPid: identity.pid,
             sdk: sdk,
-            currentDevice: currentDevice,
+            currentDevice: requestedDevice,
             listeningEndpoints: endpoints)
     }
 
@@ -977,10 +1153,10 @@ public actor SimulatorController {
             canonicalPath(persisted.sdkPath) == canonicalPath(sdk.root.path),
             persisted.sdkVersion == sdk.version.description
         else {
-            currentDevice = nil
+            requestedDevice = nil
             return
         }
-        currentDevice = persisted.currentDevice
+        requestedDevice = persisted.currentDevice
     }
 
     private func recordStableProof(_ observation: SimulatorReadyObservation) {
@@ -1055,7 +1231,7 @@ public actor SimulatorController {
         switch refresh {
         case .absent:
             currentIdentity = nil
-            currentDevice = nil
+            requestedDevice = nil
             clearReadinessProof()
             lifecycleState = .notRunning
             // A failed cross-server monkeydo cleanup must remain recoverable
@@ -1064,7 +1240,7 @@ public actor SimulatorController {
                 try? runtimeStore.clear()
             }
         case .observed(let identity, let endpoints):
-            if currentIdentity != identity { currentDevice = nil }
+            if currentIdentity != identity { requestedDevice = nil }
             currentIdentity = identity
             let observation = SimulatorReadyObservation(
                 identity: identity, listeningEndpoints: endpoints)

@@ -66,7 +66,8 @@ struct SimulatorControllerTests {
             processRunner: runner,
             sessionStopper: NoSimulatorSessionStopper(),
             system: system,
-            readinessProbe: probe)
+            readinessProbe: probe,
+            deviceReadback: ScriptedReadback([]))
 
         let context = try await controller.withOperation(
             .screenshot, requirement: .currentReady) { $0 }
@@ -90,6 +91,9 @@ struct SimulatorControllerTests {
                 .resolvingSymlinksInPath().standardizedFileURL,
             source: .explicit)
         let controller = SimulatorController(
+            // live-readback: this gate runs only when SIM_RUNTIME_EVIDENCE_*
+            // are all set, against the real simulator, and calls status()
+            // below — see DeviceVerificationTests.unitTestsNeverReachTheWindowServer.
             queue: AsyncFIFO(),
             lease: .standard,
             runtimeStore: .standard,
@@ -257,7 +261,7 @@ struct SimulatorControllerTests {
         #expect(fixture.store.read()?.currentDevice == "fenix6xpro")
 
         await fixture.system.setProcesses([fixture.system.identity(pid: 61, sdk: sdk)])
-        #expect(try await fixture.controller.status().currentDevice == nil)
+        #expect(try await fixture.controller.status().requestedDevice == nil)
         let refreshed = try await fixture.controller.withOperation(
             .screenshot, requirement: .currentReady) { $0 }
         #expect(refreshed.currentDevice == nil)
@@ -661,6 +665,35 @@ struct SimulatorControllerTests {
         #expect(status.leaseHolder?.contains("run_tests") == true)
     }
 
+    /// `operationRequestsInFlight == 0` only rules out THIS server's own
+    /// in-flight operation — the early-return path `currentStatus` covers.
+    /// A foreign holder (another process, via a direct `SimLease.acquire`
+    /// here, mirroring `statusReportsLeaseHolder`) reaches the readiness
+    /// probe's `.busy` branch instead and, without this guard, would still
+    /// consult the readback afterward — racing whatever that other process
+    /// is mid-doing to the simulator's window, such as
+    /// `restartForDeviceChange`. `status()` must treat a foreign holder
+    /// identically to its own in-flight operation: unobserved.
+    @Test("status skips the readback while a foreign lease holder is mid-operation")
+    func statusSkipsReadbackForForeignHolder() async throws {
+        let readback = ScriptedReadback([
+            .device(deviceId: "fenix6xpro", displayName: "fēnix 6X Pro")
+        ])
+        let fixture = try ControllerFixture(readback: readback)
+        defer { fixture.tearDown() }
+        let sdk = sampleSDK(version: "9.1.0")
+        await fixture.system.setProcesses([fixture.system.identity(pid: 5400, sdk: sdk)])
+        let token = try await fixture.externalLease.acquire(operation: "run_app")
+        defer { try? token.release() }
+
+        let status = try await fixture.controller.status()
+
+        #expect(status.state == .busy)
+        #expect(status.currentDevice == nil)
+        #expect(status.deviceSource == "unobserved")
+        #expect(await readback.calls == 0)
+    }
+
     @Test("concurrent operations enter their bodies in FIFO arrival order")
     func operationsAreFIFO() async throws {
         let fixture = try ControllerFixture()
@@ -751,10 +784,82 @@ struct SimulatorControllerTests {
             monkeydoOwnership: nil))
         await fixture.system.setProcesses([identity])
 
-        #expect(try await fixture.controller.status().currentDevice == "fenix6xpro")
+        // The fixture's default readback always reports unavailable, so this
+        // is testing the persisted/requested field's restoration, not an
+        // observation — `requestedDevice`, not `currentDevice`.
+        #expect(try await fixture.controller.status().requestedDevice == "fenix6xpro")
 
         await fixture.system.setProcesses([fixture.system.identity(pid: 92, sdk: sdk)])
-        #expect(try await fixture.controller.status().currentDevice == nil)
+        #expect(try await fixture.controller.status().requestedDevice == nil)
+    }
+
+    @Test("currentDevice is null when the readback cannot see a device")
+    func statusCurrentDeviceIsObserved() async throws {
+        let fixture = try ControllerFixture(readback: ScriptedReadback([.idle]))
+        defer { fixture.tearDown() }
+        _ = try await fixture.startReady(pid: 5100)
+        let status = try await fixture.controller.status()
+        #expect(status.currentDevice == nil)
+        #expect(status.deviceSource == "unobserved")
+    }
+
+    @Test("requestedDevice keeps the last requested id even when unobserved")
+    func statusKeepsRequestedDevice() async throws {
+        let fixture = try ControllerFixture(readback: ScriptedReadback([.idle, .idle]))
+        defer { fixture.tearDown() }
+        let controller = fixture.controller
+        _ = try await fixture.startReady(pid: 5101)
+        _ = try await controller.withRunAppOperation(requested: fixture.sdk) { _ in
+            try await controller.setCurrentDevice("fenix6spro", inside: .runApp)
+            return fixture.runAppResult(sessionId: 1)
+        }
+        let status = try await controller.status()
+        #expect(status.requestedDevice == "fenix6spro")
+        #expect(status.currentDevice == nil)
+    }
+
+    @Test("an observed device populates currentDevice and marks the source")
+    func statusReportsObservedDevice() async throws {
+        let readback = ScriptedReadback([
+            .device(deviceId: "fenix6xpro", displayName: "fēnix 6X Pro")
+        ])
+        let fixture = try ControllerFixture(readback: readback)
+        defer { fixture.tearDown() }
+        _ = try await fixture.startReady(pid: 5102)
+        let status = try await fixture.controller.status()
+        #expect(status.currentDevice == "fenix6xpro")
+        #expect(status.deviceSource == "observed")
+        // The observation hinges entirely on the pid the readback is called
+        // with — `DeviceReadback.observe` filters windows by it. Pin the
+        // exact value rather than trusting the call happened at all.
+        #expect(await readback.observedPids == [5102])
+    }
+
+    /// Every other `currentStatus` test leaves `requestedDevice` `nil`, which
+    /// left `currentDevice: nil` and `currentDevice: requestedDevice`
+    /// indistinguishable there by mutation — confirmed directly: swapping one
+    /// for the other left the full suite green. This test sets a
+    /// non-nil requested device and calls `status()` from inside the
+    /// operation that set it, so `operationRequestsInFlight > 0` forces the
+    /// `currentStatus(holder:)` fast path even though the readback (armed to
+    /// return a device) would happily answer if consulted.
+    @Test("currentStatus never reports the requested device as observed")
+    func currentStatusNeverObservesDuringOperation() async throws {
+        let fixture = try ControllerFixture(
+            readback: ScriptedReadback([
+                .device(deviceId: "fenix6xpro", displayName: "fēnix 6X Pro")
+            ]))
+        defer { fixture.tearDown() }
+        let controller = fixture.controller
+        _ = try await fixture.startReady(pid: 5103)
+        _ = try await controller.withRunAppOperation(requested: fixture.sdk) { _ in
+            try await controller.setCurrentDevice("fenix7s", inside: .runApp)
+            let status = try await controller.status()
+            #expect(status.currentDevice == nil)
+            #expect(status.requestedDevice == "fenix7s")
+            #expect(status.deviceSource == "unobserved")
+            return fixture.runAppResult(sessionId: 1)
+        }
     }
 
     @Test("status rejects a running simulator whose SDK cannot be inferred")
@@ -831,6 +936,39 @@ struct SimulatorControllerTests {
         #expect(status.pid == nil)
         #expect(status.currentDevice == nil)
         #expect(try await fixture.controller.status().state == .notRunning)
+    }
+
+    /// The device readback is a new suspension point inside `status()`, and
+    /// it needs the same generation re-check the readiness probe already
+    /// has. Mutation testing confirmed this guard is otherwise
+    /// indistinguishable from its absence: deleting the `guard
+    /// statusObservationIsCurrent(generation)` immediately after the
+    /// readback call left the full suite green with no direct test noticing.
+    /// This is that test — a concurrent `sim_stop` starts and completes while
+    /// the readback is still suspended, and the stale `status()` call must
+    /// fall back to `currentStatus`, never reporting the device the readback
+    /// observed against a simulator that is no longer running.
+    @Test("status discards a stale device observation after concurrent stop")
+    func statusDiscardsStaleDeviceObservationAfterStop() async throws {
+        let readback = BlockingReadback(
+            result: .device(deviceId: "fenix6xpro", displayName: "fēnix 6X Pro"))
+        let fixture = try ControllerFixture(readback: readback)
+        defer { fixture.tearDown() }
+        _ = try await fixture.startReady(pid: 5200)
+
+        let staleStatus = Task { try await fixture.controller.status() }
+        await readback.waitUntilEntered()
+
+        let stoppedPID = try await fixture.controller.withOperation(
+            .simStop, requirement: .stop
+        ) { $0.simulatorPid }
+        #expect(stoppedPID == 5200)
+
+        await readback.releaseNow()
+        let status = try await staleStatus.value
+        #expect(status.state == .notRunning)
+        #expect(status.currentDevice == nil)
+        #expect(status.deviceSource == "unobserved")
     }
 
     @Test("status does not report ready from a wildcard-only single observation")
@@ -1114,6 +1252,401 @@ struct SimulatorControllerTests {
         #expect(status.operation == nil)
         #expect(status.pid == 118)
     }
+
+    @Test("restartForDeviceChange stops the old process and returns the new pid")
+    func restartReplacesTheProcess() async throws {
+        let fixture = try ControllerFixture()
+        defer { fixture.tearDown() }
+        let controller = fixture.controller
+        let original = try await fixture.startReady(pid: 5000)
+
+        let result = try await controller.withRunAppOperation(requested: fixture.sdk) { _ in
+            let replaced = try await controller.restartForDeviceChange(
+                requested: fixture.sdk, inside: .runApp)
+            #expect(replaced.simulatorPid != original.simulatorPid)
+            #expect(replaced.simulatorPid == 5001)
+            return fixture.runAppResult(sessionId: 1)
+        }
+        #expect(result.sessionId == 1)
+        #expect(await fixture.system.signals == [.init(pid: 5000, signal: 15)])
+        #expect(fixture.store.read()?.simulatorPid == 5001)
+    }
+
+    @Test("restartForDeviceChange clears the recorded current device")
+    func restartClearsCurrentDevice() async throws {
+        let fixture = try ControllerFixture()
+        defer { fixture.tearDown() }
+        let controller = fixture.controller
+        _ = try await fixture.startReady(pid: 5000)
+        _ = try await controller.withRunAppOperation(requested: fixture.sdk) { _ in
+            try await controller.setCurrentDevice("fenix6xpro", inside: .runApp)
+            let replaced = try await controller.restartForDeviceChange(
+                requested: fixture.sdk, inside: .runApp)
+            #expect(replaced.currentDevice == nil)
+            return fixture.runAppResult(sessionId: 1)
+        }
+        // The device recorded for the old process must not survive into the
+        // new one, in memory or on disk. This is the requested field —
+        // `requestedDevice` — not an observation.
+        #expect(try await controller.status().requestedDevice == nil)
+        // Require the record to exist: `read()?.currentDevice == nil` is
+        // vacuously true when the runtime file is absent.
+        let record = try #require(fixture.store.read())
+        #expect(record.simulatorPid == 5001)
+        #expect(record.currentDevice == nil)
+    }
+
+    @Test("restartForDeviceChange refuses outside its own active operation")
+    func restartRefusesOutsideOperation() async throws {
+        let fixture = try ControllerFixture()
+        defer { fixture.tearDown() }
+        let controller = fixture.controller
+        _ = try await fixture.startReady(pid: 5000)
+        do {
+            _ = try await controller.restartForDeviceChange(
+                requested: fixture.sdk, inside: .runApp)
+            Issue.record("restart outside the active operation must fail")
+        } catch let error as ToolError {
+            #expect(error.code == "invalid_simulator_state")
+            #expect(!error.message.isEmpty)
+            #expect(!error.fix.isEmpty)
+        }
+        #expect(await fixture.system.signals.isEmpty)
+    }
+
+    /// `run_app`'s device-verification retry relies on this and adds no clear
+    /// of its own, so the behaviour needs a test of its own: mutation showed
+    /// the `currentDevice = nil` in `restartForDeviceChange` was previously
+    /// indistinguishable from its absence.
+    @Test("a device-change restart forgets the device recorded against the old process")
+    func restartClearsRecordedDevice() async throws {
+        let fixture = try ControllerFixture()
+        defer { fixture.tearDown() }
+        let controller = fixture.controller
+        _ = try await fixture.startReady(pid: 5000)
+
+        _ = try await controller.withRunAppOperation(requested: fixture.sdk) { _ in
+            try await controller.setCurrentDevice("fenix6xpro", inside: .runApp)
+            _ = try await controller.restartForDeviceChange(
+                requested: fixture.sdk, inside: .runApp)
+            return fixture.runAppResult(sessionId: 1)
+        }
+
+        #expect(try await controller.status().requestedDevice == nil)
+    }
+
+    @Test("clearCurrentDevice refuses outside its own active operation")
+    func clearCurrentDeviceRefusesOutsideOperation() async throws {
+        let fixture = try ControllerFixture()
+        defer { fixture.tearDown() }
+        let controller = fixture.controller
+        _ = try await fixture.startReady(pid: 5000)
+        _ = try await controller.withRunAppOperation(requested: fixture.sdk) { _ in
+            try await controller.setCurrentDevice("fenix6xpro", inside: .runApp)
+            return fixture.runAppResult(sessionId: 1)
+        }
+
+        do {
+            try await controller.clearCurrentDevice(inside: .runApp)
+            Issue.record("clearing the device outside the active operation must fail")
+        } catch let error as ToolError {
+            #expect(error.code == "invalid_simulator_state")
+            #expect(!error.message.isEmpty)
+            #expect(!error.fix.isEmpty)
+        }
+
+        // The refusal must protect the field, not merely report it: a guard
+        // that threw after clearing would satisfy the catch above. This is
+        // the requested field, not an observation.
+        #expect(try await controller.status().requestedDevice == "fenix6xpro")
+    }
+
+    @Test("restartForDeviceChange stops the app session before killing the simulator")
+    func restartStopsSessionFirst() async throws {
+        let fixture = try ControllerFixture()
+        defer { fixture.tearDown() }
+        let controller = fixture.controller
+        _ = try await fixture.startReady(pid: 5000)
+        _ = try await controller.withRunAppOperation(requested: fixture.sdk) { _ in
+            _ = try await controller.restartForDeviceChange(
+                requested: fixture.sdk, inside: .runApp)
+            return fixture.runAppResult(sessionId: 1)
+        }
+        let trace = fixture.trace.values
+        let stopIndex = try #require(trace.firstIndex(of: "session.stop"))
+        let termIndex = try #require(trace.firstIndex(of: "signal.SIGTERM"))
+        #expect(stopIndex < termIndex)
+    }
+
+    @Test("restart never sends TERM to a PID whose identity changed during session shutdown")
+    func restartRevalidatesBeforeTERM() async throws {
+        let sdk = sampleSDK(version: "9.1.0")
+        let replacement = SimulatorProcessIdentity(
+            pid: 5000,
+            executablePath: "/tmp/replacement/bin/ConnectIQ.app/Contents/MacOS/simulator",
+            sdk: sdk)
+        let replacementHook = SimulatorReplacementHook(replacement: replacement)
+        let fixture = try ControllerFixture(stopperHook: {
+            await replacementHook.replace()
+        })
+        defer { fixture.tearDown() }
+        await replacementHook.install(system: fixture.system)
+        let controller = fixture.controller
+        _ = try await fixture.startReady(pid: 5000)
+
+        do {
+            _ = try await controller.withRunAppOperation(requested: fixture.sdk) { _ in
+                _ = try await controller.restartForDeviceChange(
+                    requested: fixture.sdk, inside: .runApp)
+                return fixture.runAppResult(sessionId: 1)
+            }
+            Issue.record("changed PID identity must abort the restart")
+        } catch let error as ToolError {
+            #expect(error.code == "simulator_process_changed")
+            #expect(!error.fix.isEmpty)
+        }
+        #expect(await fixture.system.signals.isEmpty)
+        #expect(await fixture.system.launchedApps.count == 1)
+    }
+
+    @Test("restart sends no TERM when the expected PID is already gone")
+    func restartSkipsTERMWhenProcessAlreadyExited() async throws {
+        // The absent-process branch of the pre-TERM gate: revalidation returns
+        // *false* here rather than throwing, which is the case
+        // `restartRevalidatesBeforeTERM` cannot reach. Mirrors
+        // `absentStopIsIdempotent` for the restart path.
+        let exitHook = SimulatorExitHook()
+        let fixture = try ControllerFixture(stopperHook: { await exitHook.exitNow() })
+        defer { fixture.tearDown() }
+        await exitHook.install(system: fixture.system)
+        let controller = fixture.controller
+        _ = try await fixture.startReady(pid: 5000)
+
+        let result = try await controller.withRunAppOperation(requested: fixture.sdk) { _ in
+            let replaced = try await controller.restartForDeviceChange(
+                requested: fixture.sdk, inside: .runApp)
+            #expect(replaced.simulatorPid == 5001)
+            return fixture.runAppResult(sessionId: 1)
+        }
+
+        #expect(result.sessionId == 1)
+        #expect(await fixture.system.signals.isEmpty)
+        #expect(await fixture.system.launchedApps.count == 2)
+    }
+
+    @Test("restart consumes another server's persisted monkeydo ownership first")
+    func restartConsumesCrossServerMonkeydoOwnership() async throws {
+        let path = MutableProcessPath("/bin/bash")
+        let fixture = try ControllerFixture(monkeydoPath: path)
+        defer { fixture.tearDown() }
+        let controller = fixture.controller
+        let identity = fixture.system.identity(pid: 5000, sdk: fixture.sdk)
+        let owned = controllerOwned(pid: 9_006, sdk: fixture.sdk)
+        try fixture.store.write(RuntimeRecord(
+            simulatorPid: identity.pid,
+            executablePath: identity.executablePath,
+            sdkPath: fixture.sdk.root.path,
+            sdkVersion: fixture.sdk.version.description,
+            currentDevice: "fenix6xpro",
+            monkeydoOwnership: persistedControllerOwnership(
+                owned, ownerServerInstance: UUID())))
+        _ = try await fixture.startReady(pid: 5000)
+        // The seeded ownership must survive start, or the restart would have
+        // nothing to consume and this test would pass vacuously.
+        #expect(fixture.store.read()?.monkeydoOwnership != nil)
+
+        _ = try await controller.withRunAppOperation(requested: fixture.sdk) { _ in
+            _ = try await controller.restartForDeviceChange(
+                requested: fixture.sdk, inside: .runApp)
+            return fixture.runAppResult(sessionId: 1)
+        }
+
+        #expect(fixture.monkeydoSignals.values == [.init(pid: 9_006, signal: 15)])
+        #expect(await fixture.system.signals == [.init(pid: 5000, signal: 15)])
+        let record = try #require(fixture.store.read())
+        #expect(record.simulatorPid == 5001)
+        #expect(record.monkeydoOwnership == nil)
+    }
+
+    @Test("restart waitForExit revalidates the PID it polls during TERM grace")
+    func restartWaitForExitRevalidatesDuringGrace() async throws {
+        // Pins `waitForExit`'s own revalidation, not the pre-KILL one: the
+        // replacement is seen by the grace poll, which throws before control
+        // returns to the escalation branch.
+        let clock = FakeClock()
+        let fixture = try ControllerFixture(clock: clock)
+        defer { fixture.tearDown() }
+        let controller = fixture.controller
+        let replacement = SimulatorProcessIdentity(
+            pid: 5000,
+            executablePath: "/tmp/replacement/bin/ConnectIQ.app/Contents/MacOS/simulator",
+            sdk: fixture.sdk)
+        _ = try await fixture.startReady(pid: 5000)
+        await fixture.system.setExitOnSignal(9)
+
+        let restart = Task {
+            try await controller.withRunAppOperation(requested: fixture.sdk) { _ in
+                _ = try await controller.restartForDeviceChange(
+                    requested: fixture.sdk, inside: .runApp)
+                return fixture.runAppResult(sessionId: 1)
+            }
+        }
+        // The only fake-clock sleeper this fixture ever registers is the one
+        // inside `waitForExit`, so this handshake proves TERM has been sent
+        // and the grace wait has begun — without a scheduler-dependent spin.
+        await clock.waitUntilPendingSleepCount(1)
+        #expect(await fixture.system.signals == [.init(pid: 5000, signal: 15)])
+        await fixture.system.setProcesses([replacement])
+        clock.advance(by: .seconds(5))
+
+        do {
+            _ = try await boundedValue(of: restart)
+            Issue.record("replacement during TERM grace must abort before KILL")
+        } catch let error as ToolError {
+            #expect(error.code == "simulator_process_changed")
+        }
+        #expect(await fixture.system.signals == [.init(pid: 5000, signal: 15)])
+        #expect(await fixture.system.launchedApps.count == 1)
+    }
+
+    @Test("restart sends no KILL when the PID exits between the grace deadline and escalation")
+    func restartRevalidatesBeforeKILL() async throws {
+        // The pre-KILL revalidation is the only thing standing between the
+        // expired grace deadline and a SIGKILL. Reaching it requires the
+        // process to be present at the final grace poll and gone at the
+        // revalidation immediately after — a window `waitForExit`'s own
+        // revalidation cannot cover.
+        let clock = FakeClock()
+        let exitHook = SimulatorExitHook()
+        let countdown = LookupCountdown()
+        let fixture = try ControllerFixture(clock: clock)
+        defer { fixture.tearDown() }
+        await exitHook.install(system: fixture.system)
+        await fixture.system.setLookupHook { _ in await countdown.observeLookup() }
+        await countdown.setAction { await exitHook.exitNow() }
+        let controller = fixture.controller
+        _ = try await fixture.startReady(pid: 5000)
+        await fixture.system.setExitOnSignal(9)
+
+        let restart = Task {
+            try await controller.withRunAppOperation(requested: fixture.sdk) { _ in
+                let replaced = try await controller.restartForDeviceChange(
+                    requested: fixture.sdk, inside: .runApp)
+                #expect(replaced.simulatorPid == 5001)
+                return fixture.runAppResult(sessionId: 1)
+            }
+        }
+        await clock.waitUntilPendingSleepCount(1)
+        #expect(await fixture.system.signals == [.init(pid: 5000, signal: 15)])
+        // From here the restart makes exactly two lookups: the grace poll that
+        // finds the deadline expired, then the pre-KILL revalidation. Retire
+        // the process on the second one.
+        await countdown.arm(afterLookups: 2)
+        clock.advance(by: .seconds(5))
+
+        #expect(try await boundedValue(of: restart).sessionId == 1)
+        #expect(await fixture.system.signals == [.init(pid: 5000, signal: 15)])
+        #expect(await fixture.system.launchedApps.count == 2)
+    }
+
+    @Test("restart escalates to KILL and relaunches when TERM is ignored")
+    func restartEscalatesToKILL() async throws {
+        let clock = FakeClock()
+        let fixture = try ControllerFixture(clock: clock)
+        defer { fixture.tearDown() }
+        let controller = fixture.controller
+        _ = try await fixture.startReady(pid: 5000)
+        await fixture.system.setExitOnSignal(9)
+
+        let restart = Task {
+            try await controller.withRunAppOperation(requested: fixture.sdk) { _ in
+                let replaced = try await controller.restartForDeviceChange(
+                    requested: fixture.sdk, inside: .runApp)
+                #expect(replaced.simulatorPid == 5001)
+                return fixture.runAppResult(sessionId: 1)
+            }
+        }
+        await clock.waitUntilPendingSleepCount(1)
+        #expect(await fixture.system.signals == [.init(pid: 5000, signal: 15)])
+        clock.advance(by: .seconds(5))
+        #expect(try await boundedValue(of: restart).sessionId == 1)
+        #expect(await fixture.system.signals == [
+            .init(pid: 5000, signal: 15), .init(pid: 5000, signal: 9),
+        ])
+    }
+
+    @Test("cancelling a restart while session shutdown is suspended sends no TERM")
+    func restartCancellationDuringSessionShutdownSendsNoTERM() async throws {
+        let stopperEntered = AsyncSignal()
+        let releaseStopper = AsyncSignal()
+        let fixture = try ControllerFixture(stopperHook: {
+            await stopperEntered.signal()
+            await releaseStopper.wait()
+        })
+        defer { fixture.tearDown() }
+        let controller = fixture.controller
+        _ = try await fixture.startReady(pid: 5000)
+
+        let restart = Task {
+            try await controller.withRunAppOperation(requested: fixture.sdk) { _ in
+                _ = try await controller.restartForDeviceChange(
+                    requested: fixture.sdk, inside: .runApp)
+                return fixture.runAppResult(sessionId: 1)
+            }
+        }
+        await stopperEntered.wait()
+        restart.cancel()
+        await releaseStopper.signal()
+
+        do {
+            _ = try await boundedValue(of: restart)
+            Issue.record("cancelled restart must not continue after session shutdown")
+        } catch is CancellationError {}
+        #expect(await fixture.system.signals.isEmpty)
+        #expect(await fixture.system.launchedApps.count == 1)
+    }
+
+    @Test("cancelling a restart during TERM grace sends no KILL")
+    func restartCancellationDuringTERMGraceSendsNoKILL() async throws {
+        let clock = FakeClock()
+        let paused = AsyncSignal()
+        let release = AsyncSignal()
+        let countdown = LookupCountdown()
+        let fixture = try ControllerFixture(clock: clock)
+        defer { fixture.tearDown() }
+        await fixture.system.setLookupHook { _ in await countdown.observeLookup() }
+        await countdown.setAction {
+            await paused.signal()
+            await release.wait()
+        }
+        let controller = fixture.controller
+        _ = try await fixture.startReady(pid: 5000)
+        await fixture.system.setExitOnSignal(9)
+
+        let restart = Task {
+            try await controller.withRunAppOperation(requested: fixture.sdk) { _ in
+                _ = try await controller.restartForDeviceChange(
+                    requested: fixture.sdk, inside: .runApp)
+                return fixture.runAppResult(sessionId: 1)
+            }
+        }
+        await clock.waitUntilPendingSleepCount(1)
+        #expect(await fixture.system.signals == [.init(pid: 5000, signal: 15)])
+        // Suspend inside the pre-KILL revalidation so cancellation races the
+        // awaited lookup rather than merely cancelling the clock sleep.
+        await countdown.arm(afterLookups: 2)
+        clock.advance(by: .seconds(5))
+        await paused.wait()
+        restart.cancel()
+        await release.signal()
+
+        do {
+            _ = try await boundedValue(of: restart)
+            Issue.record("TERM-grace cancellation must propagate")
+        } catch is CancellationError {}
+        #expect(await fixture.system.signals == [.init(pid: 5000, signal: 15)])
+        #expect(await fixture.system.launchedApps.count == 1)
+    }
 }
 
 private struct RuntimeEvidence: Codable {
@@ -1145,6 +1678,52 @@ private struct SDKLayoutSandbox {
     func tearDown() { try? FileManager.default.removeItem(at: root) }
 }
 
+/// Awaits a task under a real-time bound. A restart driven by a `FakeClock`
+/// parks forever if a mutation drops the signal a test is waiting on, and an
+/// unbounded `task.value` turns that into a hung `swift test` run instead of a
+/// red test. Cancelling resumes the fake sleeper, so the await always returns.
+private func boundedValue<T: Sendable>(
+    of task: Task<T, Error>,
+    within duration: Duration = .seconds(10)
+) async throws -> T {
+    let watchdog = Task {
+        try? await Task.sleep(for: duration)
+        task.cancel()
+    }
+    defer { watchdog.cancel() }
+    return try await task.value
+}
+
+/// Runs an action on the Nth `FakeSimulatorSystem.lookup` after arming. The
+/// hook fires before `lookup` reads its process table, so an action that
+/// retires the process makes that same lookup observe the exit — the only way
+/// to land a state change strictly between two consecutive revalidations.
+private actor LookupCountdown {
+    private var remaining: Int?
+    private var action: @Sendable () async -> Void = {}
+
+    func setAction(_ value: @escaping @Sendable () async -> Void) { action = value }
+
+    func arm(afterLookups count: Int) { remaining = count }
+
+    func observeLookup() async {
+        guard let left = remaining else { return }
+        let next = left - 1
+        remaining = next > 0 ? next : nil
+        if next <= 0 { await action() }
+    }
+}
+
+/// Empties the fake process table, so identity revalidation returns `false`
+/// (the process exited) rather than throwing (a different process took the
+/// PID). `SimulatorReplacementHook` covers the throwing case.
+private actor SimulatorExitHook {
+    private var system: FakeSimulatorSystem?
+
+    func install(system: FakeSimulatorSystem) { self.system = system }
+    func exitNow() async { await system?.setProcesses([]) }
+}
+
 private actor SimulatorReplacementHook {
     private let replacement: SimulatorProcessIdentity
     private var system: FakeSimulatorSystem?
@@ -1171,6 +1750,26 @@ private actor LookupPause {
 
     func waitUntilPaused() async { await paused.wait() }
     func release() async { await released.signal() }
+}
+
+/// A `DeviceObserving` double that suspends inside `observe` until released,
+/// so a test can pin `status()` mid-readback and race a concurrent operation
+/// against it.
+private actor BlockingReadback: DeviceObserving {
+    private let entered = AsyncSignal()
+    private let release = AsyncSignal()
+    private let result: DeviceObservation
+
+    init(result: DeviceObservation) { self.result = result }
+
+    func observe(simulatorPid: pid_t) async -> DeviceObservation {
+        await entered.signal()
+        await release.wait()
+        return result
+    }
+
+    func waitUntilEntered() async { await entered.wait() }
+    func releaseNow() async { await release.signal() }
 }
 
 private struct ControllerOwnedProcess: RunningProcess, Sendable {

@@ -114,12 +114,38 @@ struct RunSequenceToolTests {
             ])
             #expect(await recorder.requests == [RunSequenceToolRequest(
                 steps: [
-                    .screenshot(label: "initial"),
+                    .screenshot(label: "initial", savePath: nil),
                     .press(button: "enter", holdMs: 1_000),
                     .waitForLog(contains: "MENU_OPENED", timeoutMs: 5_000),
                     .waitForLog(contains: "DONE", timeoutMs: 2_500),
                 ],
                 allowFocus: true)])
+        }
+    }
+
+    @Test("a screenshot step's savePath decodes off the wire, canonicalized")
+    func savePathDecodes() async throws {
+        try await withSequenceHarness { harness, recorder in
+            let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+                .appending(path: "seq-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(
+                at: directory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let requested = directory.appending(path: "frame.png").path
+
+            _ = try await harness.callRunSequence([
+                "steps": .array([
+                    .object(["kind": "screenshot", "label": "page1", "savePath": .string(requested)]),
+                ]),
+            ])
+
+            // Arguments.path routes through canonicalPath (ToolHandlers.swift),
+            // which resolves symlinks — on macOS /tmp is one — so assert
+            // against the canonical form, not the string that was sent.
+            let canonical = URL(fileURLWithPath: requested)
+                .resolvingSymlinksInPath().standardizedFileURL.path
+            #expect(await recorder.requests.first?.steps.first
+                == .screenshot(label: "page1", savePath: canonical))
         }
     }
 
@@ -227,6 +253,22 @@ struct RunSequenceToolTests {
                 return
             }
             #expect(variants.count == 3)
+
+            guard let screenshotVariant = variants.first(where: { variant in
+                guard case .object(let fields) = variant,
+                    case .object(let properties)? = fields["properties"],
+                    case .object(let kind)? = properties["kind"],
+                    case .array(let enumValues)? = kind["enum"]
+                else { return false }
+                return enumValues == [.string("screenshot")]
+            }), case .object(let screenshotFields) = screenshotVariant,
+                case .object(let screenshotProperties)? = screenshotFields["properties"]
+            else {
+                Issue.record("no screenshot variant in the step union")
+                return
+            }
+            #expect(screenshotProperties.keys.sorted() == ["kind", "label", "savePath"])
+            #expect(screenshotFields["required"] == ["kind", "label"])
         }
     }
 }

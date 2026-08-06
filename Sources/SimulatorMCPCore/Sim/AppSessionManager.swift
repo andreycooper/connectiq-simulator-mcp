@@ -283,6 +283,13 @@ public actor AppSessionManager: SimulatorSessionStopping {
         return tail
     }
 
+    /// The committed session's wire id, or nil when nothing is running.
+    /// Read before a device-change restart so the caller learns which session
+    /// its logs just became unreachable for.
+    public func currentSessionId() -> Int? {
+        current.flatMap { Int(exactly: $0.id) }
+    }
+
     public func prepareCurrentForReplacement() async throws {
         try await terminateCurrent(reason: .killed)
     }

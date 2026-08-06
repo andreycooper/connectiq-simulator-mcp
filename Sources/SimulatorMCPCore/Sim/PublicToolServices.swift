@@ -270,7 +270,8 @@ private func resolveBuild(
 private func mapBuild(_ outcome: BuildOutcome, sdk: SdkInfo) -> BuildResult {
     BuildResult(
         succeeded: outcome.succeeded, prgPath: outcome.prgPath?.path,
-        rebuilt: outcome.rebuilt, artifactKey: outcome.artifactKey, sdk: sdk.root.path,
+        rebuilt: outcome.rebuilt, rebuildReason: outcome.rebuildReason,
+        artifactKey: outcome.artifactKey, sdk: sdk.root.path,
         device: outcome.device, mode: outcome.mode,
         diagnostics: outcome.diagnostics.map {
             Diagnostic(

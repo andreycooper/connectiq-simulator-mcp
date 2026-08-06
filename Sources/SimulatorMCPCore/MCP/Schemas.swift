@@ -85,6 +85,10 @@ public enum Schemas {
         "debugApp", "releaseApp", "unitTests",
     ])
 
+    public static let rebuildReason: Value = stringEnum([
+        "cacheHit", "cacheMiss", "forced", "keyChanged",
+    ])
+
     public static let logStream: Value = stringEnum(["stdout", "stderr"])
 
     public static let permissionStatus: Value = object(
@@ -172,6 +176,7 @@ public enum Schemas {
             "succeeded": boolean,
             "prgPath": nullable(string),
             "rebuilt": boolean,
+            "rebuildReason": rebuildReason,
             "artifactKey": string,
             "sdk": string,
             "device": string,
@@ -189,8 +194,8 @@ public enum Schemas {
                 )),
         ],
         required: [
-            "succeeded", "prgPath", "rebuilt", "artifactKey", "sdk", "device", "mode",
-            "diagnostics",
+            "succeeded", "prgPath", "rebuilt", "rebuildReason", "artifactKey", "sdk", "device",
+            "mode", "diagnostics",
         ]
     )
 
@@ -203,11 +208,13 @@ public enum Schemas {
             "sdkPath": nullable(string),
             "sdkVersion": nullable(string),
             "currentDevice": nullable(string),
+            "requestedDevice": nullable(string),
+            "deviceSource": stringEnum(["observed", "unobserved"]),
             "leaseHolder": nullable(string),
         ],
         required: [
             "state", "operation", "pid", "executablePath", "sdkPath", "sdkVersion",
-            "currentDevice", "leaseHolder",
+            "currentDevice", "requestedDevice", "deviceSource", "leaseHolder",
         ]
     )
 
@@ -229,8 +236,18 @@ public enum Schemas {
             "sdkPath": string,
             "sdkVersion": string,
             "rebuilt": boolean,
+            "rebuildReason": rebuildReason,
+            "deviceVerified": boolean,
+            "deviceVerificationUnavailable": nullable(string),
+            "observedDeviceDisplayName": nullable(string),
+            "simulatorRestarted": boolean,
+            "invalidatedSessionId": nullable(integer),
         ],
-        required: ["sessionId", "device", "prgPath", "sdkPath", "sdkVersion", "rebuilt"]
+        required: [
+            "sessionId", "device", "prgPath", "sdkPath", "sdkVersion", "rebuilt", "rebuildReason",
+            "deviceVerified", "deviceVerificationUnavailable", "observedDeviceDisplayName",
+            "simulatorRestarted", "invalidatedSessionId",
+        ]
     )
 
     public static let runTestsResult: Value = object(
@@ -287,6 +304,11 @@ public enum Schemas {
         ]
     )
 
+    public static let displaySize: Value = object(
+        properties: ["width": integer, "height": integer],
+        required: ["width", "height"]
+    )
+
     public static let screenshotResult: Value = object(
         properties: [
             "path": string,
@@ -294,6 +316,9 @@ public enum Schemas {
             "width": integer,
             "height": integer,
             "capturedPid": integer,
+            "device": nullable(string),
+            "deviceDisplayName": nullable(string),
+            "nativeResolution": nullable(displaySize),
             "appDisplayRect": nullable(object(
                 properties: [
                     "x": integer,
@@ -304,7 +329,10 @@ public enum Schemas {
                 required: ["x", "y", "width", "height"]
             )),
         ],
-        required: ["path", "mimeType", "width", "height", "capturedPid", "appDisplayRect"]
+        required: [
+            "path", "mimeType", "width", "height", "capturedPid", "device",
+            "deviceDisplayName", "nativeResolution", "appDisplayRect",
+        ]
     )
 
     public static let pressButtonResult: Value = object(
@@ -338,10 +366,14 @@ public enum Schemas {
                         "path": nullable(string),
                         "width": nullable(integer),
                         "height": nullable(integer),
+                        "device": nullable(string),
+                        "deviceDisplayName": nullable(string),
+                        "nativeResolution": nullable(displaySize),
                     ],
                     required: [
                         "index", "kind", "status", "label", "button", "pressType", "transport",
-                        "waitedMs", "linesScanned", "path", "width", "height",
+                        "waitedMs", "linesScanned", "path", "width", "height", "device",
+                        "deviceDisplayName", "nativeResolution",
                     ]
                 )),
             "frameCount": integer,

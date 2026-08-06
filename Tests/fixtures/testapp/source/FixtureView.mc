@@ -59,6 +59,7 @@ class FixtureView extends WatchUi.View {
         if (!_startedLogged) {
             _startedLogged = true;
             System.println("FIXTURE_STARTED");
+            System.println("FIXTURE_SCREEN_WIDTH " + dc.getWidth());
         }
     }
 }

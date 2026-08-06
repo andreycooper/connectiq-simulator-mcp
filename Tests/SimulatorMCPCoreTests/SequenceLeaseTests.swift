@@ -24,16 +24,39 @@ struct SequenceLeaseTests {
 
         let run = try await service.run(RunSequenceToolRequest(
             steps: [
-                .screenshot(label: "initial"),
+                .screenshot(label: "initial", savePath: nil),
                 .press(button: "enter", holdMs: nil),
                 .waitForLog(contains: "MARK", timeoutMs: 5_000),
-                .screenshot(label: "after"),
+                .screenshot(label: "after", savePath: nil),
             ],
             allowFocus: true))
 
         #expect(run.failure == nil)
         #expect(run.result.steps.allSatisfy { $0.status == "completed" })
         #expect(fixture.leaseAcquisitions() == 1)
+    }
+
+    /// Pins `SequenceService.live`'s own capture closure — not a hand-copy of
+    /// its wiring — because that factory is the one composition site that
+    /// must thread a step's `savePath` into `ScreenshotService.capture`
+    /// rather than the `capture(savePath: nil)` it hard-coded before.
+    @Test("a sequence screenshot step honours its savePath through .live")
+    func liveSequenceScreenshotHonoursSavePath() async throws {
+        let fixture = try LeaseFixture()
+        defer { fixture.tearDown() }
+        let target = fixture.explicitSavePathTarget()
+        let service = fixture.sequenceService()
+
+        let run = try await service.run(RunSequenceToolRequest(
+            steps: [.screenshot(label: "explicit", savePath: target.path)], allowFocus: false))
+
+        #expect(run.failure == nil)
+        #expect(run.result.steps.first?.path == target.path)
+        #expect(FileManager.default.fileExists(atPath: target.path))
+        // Proves `.live` actually threads its `deviceReadback` parameter into
+        // the `ScreenshotService` it constructs — nothing else in this file
+        // exercises that wiring, since every other double here is dry.
+        #expect(run.result.steps.first?.device == "fenix6xpro")
     }
 
     /// The inverse: the same four steps as four separate public tool calls take
@@ -47,7 +70,9 @@ struct SequenceLeaseTests {
         let screenshot = ScreenshotService(
             deviceCatalog: DeviceCatalog(),
             operationRunner: ScreenshotOperationRunner(controller: fixture.controller),
-            makeCapturer: { _ in StubCapturer() })
+            makeCapturer: { _ in StubCapturer() },
+            deviceReadback: ScriptedReadback([]),
+            publisher: CapturePublisher(directory: fixture.screenshotDirectory))
         _ = try await screenshot.capture(savePath: nil)
         _ = try await screenshot.capture(savePath: nil)
 
@@ -63,12 +88,12 @@ struct SequenceLeaseTests {
         // Over the step ceiling.
         await expectInvalidArguments {
             _ = try await service.run(RunSequenceToolRequest(
-                steps: Array(repeating: .screenshot(label: "f"), count: 21), allowFocus: false))
+                steps: Array(repeating: .screenshot(label: "f", savePath: nil), count: 21), allowFocus: false))
         }
         // Over the frame ceiling.
         await expectInvalidArguments {
             _ = try await service.run(RunSequenceToolRequest(
-                steps: Array(repeating: .screenshot(label: "f"), count: 7), allowFocus: false))
+                steps: Array(repeating: .screenshot(label: "f", savePath: nil), count: 7), allowFocus: false))
         }
         // Over the declared wait budget.
         await expectInvalidArguments {
@@ -125,6 +150,11 @@ private struct LeaseFixture {
     private let sessions: AppSessionManager
     private let process: LeaseSessionProcess
 
+    /// Keeps published frames inside the fixture's own temp tree instead of
+    /// the real `~/.simulator-mcp/screenshots` default, so this test never
+    /// writes outside the sandbox `tearDown()` cleans up.
+    var screenshotDirectory: URL { directory.appending(path: "screenshots") }
+
     init() throws {
         directory = FileManager.default.temporaryDirectory
             .appending(path: "sequence-lease-\(UUID().uuidString)")
@@ -176,13 +206,30 @@ private struct LeaseFixture {
             readinessProbe: SimulatorReadinessProbe(
                 processRunner: runner, identityLookup: { pid in
                     pid == identity.pid ? identity : nil
-                }))
+                }),
+            deviceReadback: ScriptedReadback([]))
     }
 
     func leaseAcquisitions() -> Int { counter.count }
 
     func tearDown() { try? FileManager.default.removeItem(at: directory) }
 
+    /// A caller-chosen destination outside `screenshotDirectory`, proving a
+    /// step's `savePath` reaches the real publisher rather than always
+    /// landing in the managed default.
+    func explicitSavePathTarget() -> URL {
+        let explicit = directory.appending(path: "explicit")
+        try? FileManager.default.createDirectory(at: explicit, withIntermediateDirectories: true)
+        return explicit.appending(path: "frame.png")
+    }
+
+    /// A real scripted observation, not a dry `ScriptedReadback([])` — this is
+    /// the only test exercising `SequenceService.live`'s actual
+    /// `deviceReadback` wiring end to end, so a dry double here would let a
+    /// dropped `deviceReadback: deviceReadback` argument at `.live`'s call
+    /// site pass unnoticed (every field would already read nil either way).
+    /// Two entries cover the two screenshot steps `wholeSequenceTakesOneLease`
+    /// takes through this same fixture.
     func sequenceService() -> SequenceService {
         let process = self.process
         return SequenceService.live(
@@ -192,7 +239,12 @@ private struct LeaseFixture {
                 profile: leaseTestProfile(),
                 transports: [StubTransport(onPress: { process.emit("MARK\n") })]
             )],
-            makeCapturer: { _ in StubCapturer() })
+            makeCapturer: { _ in StubCapturer() },
+            deviceReadback: ScriptedReadback([
+                .device(deviceId: "fenix6xpro", displayName: "fēnix 6X Pro"),
+                .device(deviceId: "fenix6xpro", displayName: "fēnix 6X Pro"),
+            ]),
+            publisher: CapturePublisher(directory: screenshotDirectory))
     }
 
     /// Publishes an app session so `waitForLog` has one to read.
@@ -235,7 +287,7 @@ private func leaseTestProfile() -> InputProfile {
 private struct StubCapturer: ScreenshotCapturing {
     func captureWindow(pid: Int32) async throws -> CapturedPNG {
         CapturedPNG(
-            data: Data([0x89, 0x50, 0x4E, 0x47]), width: 454, height: 454, appDisplayRect: nil)
+            data: validPNG(padding: 8), width: 454, height: 454, appDisplayRect: nil)
     }
 }
 

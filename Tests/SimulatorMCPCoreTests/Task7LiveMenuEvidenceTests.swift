@@ -15,6 +15,9 @@ struct Task7LiveMenuEvidenceTests {
         let sdk = try SdkLocator().resolve(explicitPath: sdkPath)
         let runner = Subprocess()
         let controller = SimulatorController(
+            // live-readback: this gate runs only when SIM_TASK7_* are set,
+            // against the real simulator — see
+            // DeviceVerificationTests.unitTestsNeverReachTheWindowServer.
             queue: AsyncFIFO(), lease: .standard, runtimeStore: .standard,
             processRunner: runner, sessionStopper: NoSimulatorSessionStopper())
         let accessibility = LiveAXAccess()

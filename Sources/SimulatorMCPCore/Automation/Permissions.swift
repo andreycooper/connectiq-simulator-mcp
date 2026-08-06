@@ -47,6 +47,13 @@ public struct Permissions: Sendable {
     public static let accessibilitySettingsPath =
         "System Settings > Privacy & Security > Accessibility"
 
+    /// Why a grant can appear missing even when the executable is enabled:
+    /// macOS may attribute the TCC check to the responsible MCP host process
+    /// rather than to this executable, so a grant on one may not cover the
+    /// other.
+    public static let responsibleProcessNote =
+        "macOS may attribute TCC checks to the responsible MCP host process rather than to this executable. Grant access to the exact executable path reported above; if a check still fails, grant it to the host application as well."
+
     /// The one place that says how to grant a permission. Every code path that
     /// reports a denial routes through here, because four hand-written copies
     /// of these instructions are four chances to drift.
@@ -222,7 +229,7 @@ public struct DoctorService: Sendable {
             simulator: simulatorStatus.ok,
             screenRecording: permissionReport.screenRecording,
             accessibility: permissionReport.accessibility,
-            responsibleProcessNote: "macOS may attribute TCC checks to the responsible MCP host process. Enable the exact executable path reported above; Task 17 verifies whether the signed binary or signed host app owns the grants.",
+            responsibleProcessNote: Permissions.responsibleProcessNote,
             checks: [
                 check(name: "sdk", status: sdkStatus),
                 check(name: "java", status: javaStatus),

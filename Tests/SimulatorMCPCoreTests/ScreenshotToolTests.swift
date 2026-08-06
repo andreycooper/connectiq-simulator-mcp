@@ -75,6 +75,8 @@ private actor ScreenshotToolRecorder {
     let result = ScreenshotResult(
         path: "/tmp/shot.png", mimeType: "image/png", width: 10, height: 20,
         capturedPid: 42,
+        device: "fenix6xpro", deviceDisplayName: "fēnix 6X Pro",
+        nativeResolution: DisplaySize(width: 280, height: 280),
         appDisplayRect: DisplayRect(x: 2, y: 4, width: 6, height: 8))
     private(set) var requests: [ScreenshotToolRequest] = []
 

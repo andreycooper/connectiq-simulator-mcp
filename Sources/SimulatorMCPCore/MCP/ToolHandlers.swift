@@ -191,7 +191,7 @@ public enum ToolHandlers {
 
     public static func qualificationConfigured(_ services: ToolHandlerServices) -> [any SimulatorTool] {
         configured(services) + [
-            tool(name: "press_button", description: "Press a verified simulator hardware button. With allowFocus=true, this visibly brings Garmin Simulator forward and leaves it frontmost.",
+            tool(name: "press_button", description: "Press a verified simulator hardware button. With allowFocus=true, this visibly brings Garmin Simulator forward and leaves it frontmost. Input is verified for 19 devices, per device and per SDK version — six of them on SDK 9.1.0 only. Call list_devices and read inputSupported.",
                  input: InputSchemas.pressButton, output: Schemas.pressButtonResult) { arguments in
                 var decoder = try Arguments(arguments, allowed: ["button", "holdMs", "allowFocus"])
                 let request = PressButtonToolRequest(
@@ -206,7 +206,7 @@ public enum ToolHandlers {
                 }
                 return try ToolResultFactory.success(try await services.pressButton(request))
             },
-            tool(name: "run_sequence", description: "Script simulator button presses, screenshots and log-marker waits under a single simulator lease, returning every captured frame inline. No other MCP client can drive the simulator part-way through the sequence; a person typing at the keyboard still can. With allowFocus=true, each press visibly brings Garmin Simulator forward and leaves it frontmost. A waitForLog step needs an app this same server launched, and matches only markers printed after the sequence begins: a marker without a trailing newline is not yet a log line, and a marker proves a code path was reached, not that onUpdate() finished drawing. Waits are ordered — each one starts where the previous one matched, so waiting for a marker the app printed earlier will time out.",
+            tool(name: "run_sequence", description: "Script simulator button presses, screenshots and log-marker waits under a single simulator lease, returning every captured frame inline. A sequence runs at most 20 steps and captures at most 3 frames, because every frame is returned inline in one response. No other MCP client can drive the simulator part-way through the sequence; a person typing at the keyboard still can. With allowFocus=true, each press visibly brings Garmin Simulator forward and leaves it frontmost. A waitForLog step needs an app this same server launched, and matches only markers printed after the sequence begins: a marker without a trailing newline is not yet a log line, and a marker proves a code path was reached, not that onUpdate() finished drawing. Waits are ordered — each one starts where the previous one matched, so waiting for a marker the app printed earlier will time out.",
                  input: InputSchemas.runSequence, output: Schemas.runSequenceResult) { arguments in
                 var decoder = try Arguments(arguments, allowed: ["steps", "allowFocus"])
                 let request = RunSequenceToolRequest(
@@ -281,7 +281,27 @@ public enum ToolHandlers {
                 _ = try Arguments(arguments, allowed: [])
                 return try ToolResultFactory.success(try await services.listSdks())
             },
-            tool(name: "run_app", description: "Build and launch a Connect IQ app.",
+            tool(name: "run_app", description: """
+                Build and launch a Connect IQ app. Reports the device the \
+                simulator actually loaded, not the one requested: \
+                deviceVerified is true only when the loaded device was read \
+                back and matched, and false with \
+                deviceVerificationUnavailable set when it could not be read \
+                (for example, without the Screen Recording grant). If another \
+                device is loaded, run_app restarts the simulator first — that \
+                destroys the running app session, its logs, and its sessionId \
+                (invalidatedSessionId names the value) and adds roughly 40 \
+                seconds. A launch that connects but is contradicted by the \
+                window title is also restarted and relaunched once before \
+                failing with device_mismatch. No outer timeout bounds any of \
+                this: the worst case is about 110 seconds (30 s launch + 5 s \
+                verification, a ~40 s restart, then another 30 s + 5 s), held \
+                under one lease. Should the restart's relaunch fail, or the \
+                call be cancelled mid-restart, no simulator is left running: \
+                call sim_start before retrying. Builds are cached per \
+                (project, device, sdk, mode); rebuilt=true always comes with \
+                a rebuildReason.
+                """,
                  input: InputSchemas.runApp, output: Schemas.runAppResult) { arguments in
                 var decoder = try Arguments(arguments, allowed: [
                     "projectPath", "device", "sdk", "jungle", "developerKey", "rebuild",
@@ -305,7 +325,7 @@ public enum ToolHandlers {
                     testFilter: try decoder.string("testFilter"))
                 return try ToolResultFactory.success(try await services.runTests(request))
             },
-            tool(name: "screenshot", description: "Capture the current Connect IQ simulator window as PNG.",
+            tool(name: "screenshot", description: "Capture the current Connect IQ simulator window as PNG. appDisplayRect is stable within a session, so cropping to it makes A/B comparisons of the same app byte-identical when nothing changed.",
                  input: InputSchemas.screenshot, output: Schemas.screenshotResult) { arguments in
                 var decoder = try Arguments(arguments, allowed: ["savePath"])
                 let output = try await services.screenshot(
@@ -486,9 +506,12 @@ private struct Arguments {
                 }
                 return .press(button: button, holdMs: holdMs)
             case "screenshot":
-                var step = try Self.stepArguments(fields, index: index, allowed: ["kind", "label"])
+                var step = try Self.stepArguments(
+                    fields, index: index, allowed: ["kind", "label", "savePath"])
                 _ = try step.string("kind")
-                return .screenshot(label: try step.requiredString("label"))
+                return .screenshot(
+                    label: try step.requiredString("label"),
+                    savePath: try step.path("savePath"))
             case "waitForLog":
                 var step = try Self.stepArguments(fields, index: index,
                                                   allowed: ["kind", "contains", "timeoutMs"])
@@ -597,6 +620,7 @@ private enum InputSchemas {
     private static let screenshotStep = object([
         "kind": ["type": "string", "enum": .array([.string("screenshot")])],
         "label": string,
+        "savePath": string,
     ], required: ["kind", "label"])
 
     private static let waitForLogStep = object([

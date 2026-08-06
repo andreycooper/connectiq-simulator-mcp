@@ -160,17 +160,17 @@ JSON as the first text content item. Success is `{ok:true,result:...}` with
 | `doctor` | `requestPermissions?` (default `false`) | SDK, Java, simulator, stable signature, responsible-process note, Screen Recording and Accessibility preflights. Permission prompts occur only when explicitly requested. |
 | `list_sdks` | none | Installed SDK paths/versions and the active resolution source. Missing SDK state is actionable. |
 | `list_devices` | `projectPath?`, `jungle?`, `sdk?` | Installed/manifest-filtered devices. Input capability comes from the verified profile allowlist; devices outside it report `inputSupported=false`, `buttons=[]`, and `inputProfile=null`. |
-| `build` | `projectPath`; optional `device`, `sdk`, `jungle`, `developerKey`, `release`, `unitTests` | Artifact identity plus structured diagnostics. Ordinary compiler errors return `succeeded=false`; incompatible build flags are rejected. |
+| `build` | `projectPath`; optional `device`, `sdk`, `jungle`, `developerKey`, `release`, `unitTests` | Artifact identity plus structured diagnostics. Builds are cached per (project, device, SDK, mode); when `rebuilt=true`, `rebuildReason` says why the cache did not apply. Ordinary compiler errors return `succeeded=false`; incompatible build flags are rejected. |
 | `sim_start` | `sdk?` | Verified ready status for the exact SDK. A running different SDK returns `sdk_mismatch`. |
 | `sim_stop` | none | Confirmed `not_running` status after session and simulator cleanup. |
-| `sim_status` | none | State, operation, PID, SDK, current device, and lease holder without taking the lease. |
-| `run_app` | `projectPath`; optional `device`, `sdk`, `jungle`, `developerKey`, `rebuild` | Verified session ID, device, PRG, SDK, and rebuild state only after an exact launcher connection. |
+| `sim_status` | none | State, operation, PID, SDK, lease holder, and three device fields without taking the lease: the **observed** current device (`currentDevice`, `null` when idle/unavailable/an operation is in flight), the last **requested** device (`requestedDevice`), and which of the two applies (`deviceSource`, `"observed"`/`"unobserved"`). |
+| `run_app` | `projectPath`; optional `device`, `sdk`, `jungle`, `developerKey`, `rebuild` | Verified session ID, device, PRG, SDK, and rebuild state only after an exact launcher connection. Reports the device the simulator **actually loaded**, read back from its window title: `deviceVerified` is true only when that readback matched the request, and false with `deviceVerificationUnavailable` (for example `"screenRecordingDenied"`) when it could not be read — never a claim it did not observe. Loading a different device restarts the simulator first, which destroys the running session (`invalidatedSessionId` names it) and reports `simulatorRestarted: true`. `rebuilt=true` always comes with a `rebuildReason`. |
 | `run_tests` | `projectPath`; optional `device`, `sdk`, `jungle`, `developerKey`, `testFilter` | Transcript-authoritative totals and every per-test result; the child exit code is not trusted. |
 | `get_logs` | optional `sessionId`, `sinceToken`, `limit` | Bounded lines, crash state, termination data, dropped count, and next cursor. |
-| `screenshot` | `savePath?` | PNG image content plus dimensions, simulator PID, saved path, and `appDisplayRect`. Permission denial names the exact onboarding fix. |
+| `screenshot` | `savePath?` | PNG image content plus dimensions, simulator PID, saved path, `appDisplayRect`, and the `device`/`deviceDisplayName` observed at capture time (`null` when it could not be observed). Without `savePath`, captures go to `~/.simulator-mcp/screenshots/`, which the server owns and prunes; a `savePath` is written where you asked and never garbage-collected. A capture is only reported after it has been staged, read back at full length, and atomically renamed into place — a short write fails with `capture_write_short` instead of leaving a truncated file. Permission denial names the exact onboarding fix. |
 | `set_gps_position` | `lat`, `lon` | Checked coordinates and simulator PID after semantic Accessibility automation and dialog-close proof. |
 | `press_button` | `button`; optional `holdMs` (50–5000), `allowFocus` (default `false`) | Delivers a verified hardware button to the focused simulator and reports the button, press type, transport, and simulator PID. |
-| `run_sequence` | `steps` (1–20, each `press`/`screenshot`/`waitForLog`); optional `allowFocus` (default `false`) | Runs a scripted interaction under a **single** simulator lease and returns every captured frame inline as an image block. A failed step still returns the frames captured before it plus one taken at the moment of failure. |
+| `run_sequence` | `steps` (1–20, each `press`/`screenshot`/`waitForLog`); optional `allowFocus` (default `false`) | Runs a scripted interaction under a **single** simulator lease and returns every captured frame inline as an image block. A `screenshot` step takes the same optional `savePath` as the tool, with the same rules. A failed step still returns the frames captured before it plus one taken at the moment of failure. |
 
 ### Button automation
 
@@ -312,9 +312,22 @@ newest installed semantic version. Simulator operations compare the requested
 SDK with the running SDK; on `sdk_mismatch`, call `sim_stop`, then `sim_start`
 with the desired SDK.
 
-Screenshot and GPS have no device override: they use the current device set by
-the latest verified run. If there is no current device, run an app or test on a
-device first. One current app session remains readable after exit. A new
+Device verification needs the **Screen Recording** grant: the loaded device is
+read back from the simulator's window title, and macOS redacts window titles
+without it. Denied, the server does not guess — `run_app` still launches and
+returns `ok`, with `deviceVerified: false` and
+`deviceVerificationUnavailable: "screenRecordingDenied"`, and `sim_status`
+reports `deviceSource: "unobserved"`.
+
+Captures without a `savePath` land in `~/.simulator-mcp/screenshots/`, not in
+`/tmp`. The server keeps the 200 most recent for 24 hours and deletes only
+files it named itself; anything else in that directory, and every `savePath`
+you pass, is left alone.
+
+Screenshot and GPS have no device override: they use the requested device set
+by the latest verified run — `sim_status`'s `requestedDevice`, not its
+observed `currentDevice`. If there is no requested device, run an app or test
+on a device first. One current app session remains readable after exit. A new
 verified session replaces it; old cursors then fail with `stale_session` and
 name the newer session instead of reading unrelated logs.
 

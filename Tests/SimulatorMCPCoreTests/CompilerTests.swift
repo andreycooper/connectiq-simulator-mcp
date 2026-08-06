@@ -135,6 +135,62 @@ struct CompilerTests {
         #expect(runner.invocations.count == 2)
     }
 
+    // MARK: - rebuildReason
+
+    @Test("a reusable artifact reports cacheHit and does not rebuild")
+    func reportsCacheHit() async throws {
+        let sandbox = try CompileSandbox()
+        defer { sandbox.tearDown() }
+        let compiler = Compiler(runner: writingRunner())
+        _ = try await compiler.build(sandbox.makeRequest(mode: .debugApp))
+        let second = try await compiler.build(sandbox.makeRequest(mode: .debugApp))
+        #expect(!second.rebuilt)
+        #expect(second.rebuildReason == .cacheHit)
+    }
+
+    @Test("a first build for a device reports cacheMiss, not forced")
+    func reportsCacheMiss() async throws {
+        let sandbox = try CompileSandbox()
+        defer { sandbox.tearDown() }
+        let compiler = Compiler(runner: writingRunner())
+        let outcome = try await compiler.build(sandbox.makeRequest(mode: .debugApp))
+        #expect(outcome.rebuilt)
+        #expect(outcome.rebuildReason == .cacheMiss)
+    }
+
+    @Test("force reports forced even when a reusable artifact exists")
+    func reportsForced() async throws {
+        let sandbox = try CompileSandbox()
+        defer { sandbox.tearDown() }
+        let compiler = Compiler(runner: writingRunner())
+        _ = try await compiler.build(sandbox.makeRequest(mode: .debugApp))
+        let forced = try await compiler.build(sandbox.makeRequest(mode: .debugApp, force: true))
+        #expect(forced.rebuildReason == .forced)
+    }
+
+    @Test("an artifact whose sidecar key no longer matches reports keyChanged")
+    func reportsKeyChanged() async throws {
+        let sandbox = try CompileSandbox()
+        defer { sandbox.tearDown() }
+        let compiler = Compiler(runner: writingRunner())
+        _ = try await compiler.build(sandbox.makeRequest(mode: .debugApp))
+        try sandbox.bumpMtime(of: "source/CompilerProbe.mc")
+        let rebuilt = try await compiler.build(sandbox.makeRequest(mode: .debugApp))
+        #expect(rebuilt.rebuildReason == .keyChanged)
+    }
+
+    @Test("a failed build never reports cacheHit")
+    func failedBuildNeverReportsCacheHit() async throws {
+        let sandbox = try CompileSandbox()
+        defer { sandbox.tearDown() }
+        let runner = FakeProcessRunner { _ in
+            (100, Data(), Data("ERROR: fenix6xpro: /p/X.mc:1,1: Broken.\n".utf8))
+        }
+        let outcome = try await Compiler(runner: runner).build(sandbox.makeRequest())
+        #expect(!outcome.succeeded)
+        #expect(outcome.rebuildReason != .cacheHit)
+    }
+
     // MARK: - Failure paths
 
     @Test("ordinary compile errors return succeeded=false with diagnostics, not a throw")

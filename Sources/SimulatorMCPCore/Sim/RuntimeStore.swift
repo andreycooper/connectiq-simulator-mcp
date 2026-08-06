@@ -42,6 +42,12 @@ public struct RuntimeRecord: Codable, Equatable, Sendable {
     public let executablePath: String
     public let sdkPath: String
     public let sdkVersion: String
+    /// The last device someone *asked for* — never an observation. Read by
+    /// `MonitorState` and fed to the status-bar monitor as `device`, so today
+    /// the monitor still presents a request as an observation; correcting
+    /// that display is deferred deliberately (see the 2026-08-06
+    /// device-and-capture-trust spec's §10). Renaming this persisted field is
+    /// a migration and out of scope here.
     public let currentDevice: String?
     public let monkeydoOwnership: PersistedMonkeydoOwnership?
 

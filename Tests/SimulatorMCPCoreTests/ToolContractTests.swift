@@ -96,6 +96,9 @@ struct ToolContractTests {
             width: 280,
             height: 280,
             capturedPid: 4242,
+            device: "fenix6xpro",
+            deviceDisplayName: "fēnix 6X Pro",
+            nativeResolution: DisplaySize(width: 280, height: 280),
             appDisplayRect: DisplayRect(x: 76, y: 141, width: 280, height: 280)
         )
         let base64 = Data("not-really-a-png".utf8).base64EncodedString()
@@ -210,6 +213,29 @@ struct ToolContractTests {
         #expect(names == ["alpha", "mid", "zeta"])
     }
 
+    // MARK: - Tool description wording
+
+    @Test("run_sequence states its frame and step caps")
+    func sequenceDescriptionStatesCaps() throws {
+        let description = try toolDescription(named: "run_sequence")
+        #expect(description.contains("at most 3"))
+        #expect(description.contains("20 steps"))
+    }
+
+    @Test("press_button's description states that qualification is per device and SDK")
+    func pressDescriptionStatesSdkScope() throws {
+        let description = try toolDescription(named: "press_button")
+        #expect(description.contains("SDK"))
+    }
+
+    @Test("run_app's description states the restart cost and the grant it needs")
+    func runAppDescriptionStatesVerificationTerms() throws {
+        let description = try toolDescription(named: "run_app")
+        #expect(description.contains("Screen Recording"))
+        #expect(description.contains("sessionId"))
+        #expect(description.contains("rebuildReason"))
+    }
+
     // MARK: - Duplicate-name precondition (subprocess)
 
     @Test(
@@ -302,6 +328,21 @@ struct StubTool: SimulatorTool {
     func call(arguments: [String: Value]) async throws -> CallTool.Result {
         try await handler(arguments)
     }
+}
+
+/// Looks up one tool's published description from the live registered
+/// surface (`ToolHandlers.live()`), so a wording assertion exercises the
+/// exact text a caller sees rather than a copy pasted into the test.
+func toolDescription(named name: String) throws -> String {
+    let tools = try ToolHandlers.live()
+    guard let tool = tools.first(where: { $0.definition.name == name }),
+        let description = tool.definition.description
+    else {
+        throw ToolError(
+            code: "internal_error", message: "No registered tool named \(name) with a description.",
+            fix: "Check the tool name against ToolHandlers.live().")
+    }
+    return description
 }
 
 /// Decodes the failure envelope out of a `CallTool.Result`'s JSON text block.

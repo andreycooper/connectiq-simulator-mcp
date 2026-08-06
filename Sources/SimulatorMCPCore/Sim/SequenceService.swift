@@ -6,7 +6,7 @@ import Foundation
 /// cannot be represented at all.
 public enum SequenceStep: Equatable, Sendable {
     case press(button: String, holdMs: Int?)
-    case screenshot(label: String)
+    case screenshot(label: String, savePath: String?)
     case waitForLog(contains: String, timeoutMs: Int)
 
     public var kind: String {
@@ -145,7 +145,7 @@ public struct SequenceService: Sendable {
     static let pollPageLimit = 500
 
     private let operationRunner: SequenceOperationRunner
-    private let capture: @Sendable (OperationContext) async throws -> ScreenshotOutput
+    private let capture: @Sendable (OperationContext, String?) async throws -> ScreenshotOutput
     private let press:
         @Sendable (PressButtonToolRequest, OperationContext) async throws -> PressButtonResult
     private let readLogs: @Sendable (String?, Int) async throws -> GetLogsResult
@@ -159,7 +159,7 @@ public struct SequenceService: Sendable {
 
     public init<C: Clock>(
         operationRunner: SequenceOperationRunner,
-        capture: @escaping @Sendable (OperationContext) async throws -> ScreenshotOutput,
+        capture: @escaping @Sendable (OperationContext, String?) async throws -> ScreenshotOutput,
         press: @escaping @Sendable (PressButtonToolRequest, OperationContext) async throws ->
             PressButtonResult,
         readLogs: @escaping @Sendable (String?, Int) async throws -> GetLogsResult,
@@ -342,13 +342,16 @@ public struct SequenceService: Sendable {
         carried: [LogLine]
     ) async throws -> StepProduct {
         switch step {
-        case .screenshot(let label):
-            let output = try await capture(context)
+        case .screenshot(let label, let savePath):
+            let output = try await capture(context, savePath)
             return StepProduct(
                 outcome: SequenceStepOutcome(
                     index: index, kind: step.kind, status: "completed", label: label,
                     path: output.result.path, width: output.result.width,
-                    height: output.result.height),
+                    height: output.result.height,
+                    device: output.result.device,
+                    deviceDisplayName: output.result.deviceDisplayName,
+                    nativeResolution: output.result.nativeResolution),
                 frame: SequenceFrame(stepIndex: index, label: label, png: output.png),
                 cursor: cursor,
                 carried: carried)
@@ -524,7 +527,11 @@ public struct SequenceService: Sendable {
             let output = try await ClockSupport.withDeadline(
                 Self.terminalCaptureBudget, clock: clock
             ) {
-                try await capture(context)
+                // Always the managed default directory: this is a diagnostic
+                // capture, not the step the caller asked to save, so it must
+                // never collide with — or silently overwrite — a savePath the
+                // caller chose for a different step.
+                try await capture(context, nil)
             }
             return SequenceFrame(stepIndex: index, label: "post-failure", png: output.png)
         } catch {
@@ -585,7 +592,7 @@ extension SequenceStep {
     /// Only a screenshot carries a caller-supplied label, and a failed or
     /// skipped step still reports the one it was asked for.
     var label: String? {
-        if case .screenshot(let label) = self { return label }
+        if case .screenshot(let label, _) = self { return label }
         return nil
     }
 }
@@ -605,16 +612,20 @@ extension SequenceService {
         sessions: AppSessionManager,
         buttonDevices: [(profile: InputProfile, transports: [any ButtonPressing])],
         deviceCatalog: DeviceCatalog = DeviceCatalog(),
-        makeCapturer: (@Sendable (PixelRect?) -> any ScreenshotCapturing)? = nil
+        makeCapturer: (@Sendable (PixelRect?) -> any ScreenshotCapturing)? = nil,
+        deviceReadback: any DeviceObserving = DeviceReadback(),
+        publisher: CapturePublisher = CapturePublisher()
     ) -> SequenceService {
         SequenceService(
             operationRunner: SequenceOperationRunner(controller: controller),
-            capture: { context in
+            capture: { context, savePath in
                 try await ScreenshotService(
                     deviceCatalog: deviceCatalog,
                     operationRunner: .immediate(context: context),
-                    makeCapturer: makeCapturer
-                ).capture(savePath: nil)
+                    makeCapturer: makeCapturer,
+                    deviceReadback: deviceReadback,
+                    publisher: publisher
+                ).capture(savePath: savePath)
             },
             press: { request, context in
                 try await ButtonInputService(

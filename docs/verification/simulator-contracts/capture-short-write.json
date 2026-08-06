@@ -1,0 +1,64 @@
+{
+  "gate": "8.3 — short-write probe",
+  "measuredAt": "2026-08-06",
+  "machine": "Darwin 25.5.0 arm64",
+  "probe": "docs/verification/probes/short-write/probe.swift",
+
+  "verdict": "NOT REPRODUCED. No cause established. The remedy ships as an unconditional invariant, not as a fix for a diagnosed mechanism.",
+  "shortEncodesObserved": 0,
+  "rootCause": null,
+
+  "population": {
+    "iterations": 500,
+    "device": "fenix6xpro",
+    "sdk": "9.1.0",
+    "imagePixels": "860x1312",
+    "encodedBytesEveryIteration": 973285,
+    "encodeQueue": "com.apple.NSXPCConnection.m-user.com.apple.replayd",
+    "note": "973,285 bytes matches the ~973 KB the design spec records for the window size that failed most often, so the probe sampled the right image scale."
+  },
+
+  "fidelityToProduction": {
+    "capturePath": "SCShareableContent.getExcludingDesktopWindows + SCScreenshotManager.captureImage, COMPLETION-HANDLER form",
+    "encodeSite": "inside the captureImage completion, mirroring ScreenshotService.swift:235-246",
+    "coreGraphicsInit": "CGMainDisplayID() on the MainActor before any capture",
+    "twoCorrectionsMade": [
+      "The first probe omitted the CGMainDisplayID() initialisation and died on iteration 0 with CGS_REQUIRE_INIT — the exact assertion ScreenshotService.liveCapture documents and works around, because a headless CLI has no AppKit lifecycle to initialise its WindowServer connection.",
+      "The second probe used captureImage's async/await form, which runs the encode on com.apple.root.default-qos.cooperative — the Swift concurrency pool, NOT ScreenCaptureKit's XPC callback queue. Since the callback context is the whole hypothesis, that would have produced a null result from the wrong context. Switched to the completion-handler form, which encodes on com.apple.NSXPCConnection.m-user.com.apple.replayd as production does."
+    ]
+  },
+
+  "perIterationRecord": [
+    "nsLengthAfterFinalize", "dataCountAtPublish", "fileSize", "encodeQueue",
+    "imageWidth", "imageHeight"
+  ],
+  "invariantsHeld": {
+    "fileSizeAlwaysEqualledEncodedLength": true,
+    "bridgedDataCountAlwaysEqualledEncodedLength": true,
+    "distinctEncodedLengths": 1
+  },
+
+  "priorObservation": {
+    "directory": "/tmp/simulator-mcp",
+    "filesTotal": 468,
+    "filesAt4Bytes": 430,
+    "filesComplete": 38,
+    "completeByteRange": [598207, 1065778],
+    "note": "btime == mtime == ctime on every short file: created short, never truncated later. Interleaved with complete files in the same minutes, so intermittent rather than universal."
+  },
+
+  "offlineControl": {
+    "iterations": 40,
+    "mismatches": 0,
+    "note": "Single-threaded encode+write of an 818x1232 image. Does not reproduce, which is why the probe had to run through the real callback."
+  },
+
+  "limitationsOfThisSample": [
+    "The window content was STATIC for all 500 iterations — every capture encoded to the identical 973,285 bytes, and distinctEncodedLengths is 1. The original failures occurred during real agent work where the app was redrawing between captures, so encoded length varied. This probe did not sample varying content, and content variation is not excluded as a factor.",
+    "All 500 captures ran back to back in one process with nothing else driving the simulator. The original failures occurred interleaved with builds, launches, button presses and log reads under a lease. Concurrent load is not excluded as a factor.",
+    "A null result over 500 samples bounds the rate only loosely: at 95% confidence this is consistent with a true rate below roughly 0.6%. The prior observation was far higher than that (430 of 468), so whatever produced those files was NOT operating under the conditions sampled here.",
+    "That last point is the most useful thing this gate establishes: the mechanism is conditional on something this probe did not reproduce, not a constant property of the encode path."
+  ],
+
+  "remedy": "CapturePublisher validates PNG framing before writing, stages to a hidden sibling, verifies the staged file's size against the encoded byte count, and only then promotes it with one atomic rename. A short encode therefore cannot reach a caller as a path, whatever its cause. See Sources/SimulatorMCPCore/Automation/CapturePublisher.swift."
+}

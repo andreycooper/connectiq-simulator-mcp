@@ -34,10 +34,10 @@ struct SequenceFailureTests {
 
         let run = try await harness.service().run(RunSequenceToolRequest(
             steps: [
-                .screenshot(label: "one"),
-                .screenshot(label: "two"),
+                .screenshot(label: "one", savePath: nil),
+                .screenshot(label: "two", savePath: nil),
                 .press(button: "enter", holdMs: nil),   // step 2 fails
-                .screenshot(label: "never"),
+                .screenshot(label: "never", savePath: nil),
                 .press(button: "esc", holdMs: nil),
             ],
             allowFocus: true))
@@ -76,7 +76,7 @@ struct SequenceFailureTests {
             failOnPressNumber: 1)
 
         let run = try await harness.service().run(RunSequenceToolRequest(
-            steps: [.press(button: "enter", holdMs: nil), .screenshot(label: "never")],
+            steps: [.press(button: "enter", holdMs: nil), .screenshot(label: "never", savePath: nil)],
             allowFocus: false))
 
         let failure = try #require(run.failure)
@@ -101,7 +101,7 @@ struct SequenceFailureTests {
             captureFailsAfterCount: 1)
 
         let run = try await harness.service().run(RunSequenceToolRequest(
-            steps: [.screenshot(label: "one"), .press(button: "up", holdMs: nil)],
+            steps: [.screenshot(label: "one", savePath: nil), .press(button: "up", holdMs: nil)],
             allowFocus: true))
 
         let failure = try #require(run.failure)
@@ -123,7 +123,7 @@ struct SequenceFailureTests {
         let harness = FailureHarness(hangOnCaptureNumber: 2, clock: clock)
 
         async let running = harness.service().run(RunSequenceToolRequest(
-            steps: [.screenshot(label: "one"), .screenshot(label: "hangs")],
+            steps: [.screenshot(label: "one", savePath: nil), .screenshot(label: "hangs", savePath: nil)],
             allowFocus: false))
 
         // Let the hanging step start, then run the whole budget out from under
@@ -150,7 +150,7 @@ struct SequenceFailureTests {
             captureFailure: CocoaError(.fileWriteOutOfSpace))
 
         let run = try await harness.service().run(RunSequenceToolRequest(
-            steps: [.screenshot(label: "one"), .screenshot(label: "two")],
+            steps: [.screenshot(label: "one", savePath: nil), .screenshot(label: "two", savePath: nil)],
             allowFocus: false))
 
         let failure = try #require(run.failure)
@@ -173,9 +173,9 @@ struct SequenceFailureTests {
 
         let run = try await harness.service().run(RunSequenceToolRequest(
             steps: [
-                .screenshot(label: "one"),
-                .screenshot(label: "two"),
-                .screenshot(label: "three"),
+                .screenshot(label: "one", savePath: nil),
+                .screenshot(label: "two", savePath: nil),
+                .screenshot(label: "three", savePath: nil),
             ],
             allowFocus: false))
 
@@ -238,7 +238,7 @@ private struct FailureHarness: Sendable {
         let captureFailure = self.captureFailure
         let hangOnCaptureNumber = self.hangOnCaptureNumber
         let hanging = self.hanging
-        let capture: @Sendable (OperationContext) async throws -> ScreenshotOutput = { _ in
+        let capture: @Sendable (OperationContext, String?) async throws -> ScreenshotOutput = { _, _ in
             let count = state.nextCapture()
             if count == hangOnCaptureNumber {
                 // Never returns and never observes cancellation — exactly the
@@ -259,7 +259,9 @@ private struct FailureHarness: Sendable {
             return ScreenshotOutput(
                 result: ScreenshotResult(
                     path: "/tmp/simulator-mcp/frame-\(count).png", mimeType: "image/png",
-                    width: 454, height: 454, capturedPid: 4_242, appDisplayRect: nil),
+                    width: 454, height: 454, capturedPid: 4_242,
+                    device: nil, deviceDisplayName: nil, nativeResolution: nil,
+                    appDisplayRect: nil),
                 png: Data([0x89, 0x50, 0x4E, 0x47, UInt8(count)]))
         }
         let press: @Sendable (PressButtonToolRequest, OperationContext) async throws ->

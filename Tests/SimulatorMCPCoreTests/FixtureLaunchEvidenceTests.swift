@@ -492,10 +492,17 @@ struct FixtureLaunchEvidenceTests {
             clock: ContinuousClock())
         let sessions = AppSessionManager(lifecycle: lifecycle)
         let controller = SimulatorController(
+            // live-readback: this gate runs only when SIM_TASK13_* are all
+            // set, against the real simulator — see
+            // DeviceVerificationTests.unitTestsNeverReachTheWindowServer.
             queue: AsyncFIFO(), lease: .standard, runtimeStore: .standard,
             processRunner: processRunner, sessionStopper: sessions,
             monkeydoLifecycle: lifecycle)
         let coordinator = RunCoordinator(
+            // live-readback: this gate runs only when SIM_TASK13_* are all
+            // set, against the real simulator, and is meant to read the real
+            // window title. Every other construction must inject a double —
+            // see DeviceVerificationTests.unitTestsNeverReachTheWindowServer.
             controller: controller,
             compiler: Compiler(runner: processRunner),
             sessionManager: sessions,
@@ -617,6 +624,9 @@ struct FixtureLaunchEvidenceTests {
         let sessions = AppSessionManager(
             lifecycle: MonkeydoProcessLifecycle(processRunner: processRunner))
         let controller = SimulatorController(
+            // live-readback: this gate runs only when SIM_LAUNCH_EVIDENCE_*
+            // are all set, against the real simulator — see
+            // DeviceVerificationTests.unitTestsNeverReachTheWindowServer.
             queue: AsyncFIFO(), lease: .standard, runtimeStore: .standard,
             processRunner: processRunner, sessionStopper: sessions)
         let fixtureBin = projectRoot.appending(path: "bin", directoryHint: .isDirectory)

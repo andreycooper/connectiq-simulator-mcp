@@ -45,6 +45,9 @@ actor ButtonProbeHarness {
                 fix: "Set SIM_BUTTON_PROBE=1 only when an evidence capture is explicitly authorized.")
         }
         return ButtonProbeHarness(controller: SimulatorController(
+            // live-readback: this probe runs only when SIM_BUTTON_PROBE=1,
+            // against the real simulator — see
+            // DeviceVerificationTests.unitTestsNeverReachTheWindowServer.
             queue: AsyncFIFO(), lease: .standard, runtimeStore: .standard,
             processRunner: runner, sessionStopper: NoSimulatorSessionStopper()), runner: runner)
     }

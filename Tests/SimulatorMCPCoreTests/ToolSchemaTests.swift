@@ -125,6 +125,7 @@ struct ToolSchemaTests {
                         succeeded: false,
                         prgPath: nil,
                         rebuilt: false,
+                        rebuildReason: .cacheMiss,
                         artifactKey: "9e2f1c",
                         sdk: "9.1.0",
                         device: "fenix6xpro",
@@ -158,6 +159,8 @@ struct ToolSchemaTests {
                             sdkPath: nil,
                             sdkVersion: nil,
                             currentDevice: nil,
+                            requestedDevice: nil,
+                            deviceSource: "unobserved",
                             leaseHolder: nil
                         )))
             }
@@ -176,7 +179,15 @@ struct ToolSchemaTests {
                         prgPath: "/tmp/build/App-fenix6xpro.prg",
                         sdkPath: "/sdks/connectiq-sdk-mac-9.1.0",
                         sdkVersion: "9.1.0",
-                        rebuilt: true
+                        rebuilt: true,
+                        rebuildReason: .cacheMiss,
+                        // Nil optionals on purpose: the hand-written encoder
+                        // must still put every documented key on the wire.
+                        deviceVerified: false,
+                        deviceVerificationUnavailable: nil,
+                        observedDeviceDisplayName: nil,
+                        simulatorRestarted: false,
+                        invalidatedSessionId: nil
                     ))
             }
         ),
@@ -233,6 +244,9 @@ struct ToolSchemaTests {
                         width: 280,
                         height: 280,
                         capturedPid: 4242,
+                        device: "fenix6xpro",
+                        deviceDisplayName: "fēnix 6X Pro",
+                        nativeResolution: DisplaySize(width: 280, height: 280),
                         appDisplayRect: DisplayRect(x: 76, y: 141, width: 280, height: 280)
                     ))
             }
@@ -267,6 +281,8 @@ struct ToolSchemaTests {
         sdkPath: "/sdks/connectiq-sdk-mac-9.1.0",
         sdkVersion: "9.1.0",
         currentDevice: "fenix6xpro",
+        requestedDevice: "fenix6xpro",
+        deviceSource: "observed",
         leaseHolder: nil
     )
 
@@ -281,6 +297,62 @@ struct ToolSchemaTests {
 
         let violations = SchemaValidator.violations(instance: instance, schema: schema)
         #expect(violations.isEmpty, "\(name): \(violations.joined(separator: "; "))")
+    }
+
+    /// The success-example check above only proves a schema's `required`
+    /// list is a *subset* of what a representative sample happens to carry —
+    /// dropping a key from `required` while the sample still encodes it
+    /// (e.g. `ScreenshotResult`'s hand-written `encode(to:)` still emitting
+    /// `device`) passes that check silently. This walks every object node in
+    /// a result schema and asserts `required` names exactly the properties
+    /// declared, matching this file's header contract ("nullable fields are
+    /// still schema-required"). It walks `representative.schema` alone, never
+    /// the wrapped envelope, because `toolFailure.details` is a deliberate,
+    /// documented exception that lives in the envelope, not in any result.
+    @Test(
+        "every declared result schema requires exactly the fields it declares",
+        arguments: representatives.map(\.name))
+    func testResultSchemaRequiresEveryDeclaredField(name: String) throws {
+        let representative = try #require(
+            Self.representatives.first(where: { $0.name == name }))
+        let violations = Self.exhaustiveRequiredViolations(representative.schema, path: name)
+        #expect(violations.isEmpty, "\(violations.joined(separator: "; "))")
+    }
+
+    /// Recurses into `properties` whenever it is present, independent of
+    /// whether `required` is too — a node with `properties` and no
+    /// `required` must itself be reported (that is the strongest form of
+    /// drift this walk exists to catch: an object that dropped its required
+    /// list wholesale), and it must not swallow its children along with it.
+    private static func exhaustiveRequiredViolations(_ value: Value, path: String) -> [String] {
+        guard case .object(let fields) = value else { return [] }
+        var violations: [String] = []
+        if case .object(let properties)? = fields["properties"] {
+            let propertyNames = Set(properties.keys)
+            if case .array(let requiredValues)? = fields["required"] {
+                let requiredNames = Set(
+                    requiredValues.compactMap { field -> String? in
+                        if case .string(let name) = field { return name }
+                        return nil
+                    })
+                if propertyNames != requiredNames {
+                    violations.append(
+                        "\(path): properties \(propertyNames.sorted()) != required \(requiredNames.sorted())"
+                    )
+                }
+            } else {
+                violations.append(
+                    "\(path): has properties \(propertyNames.sorted()) but no required list")
+            }
+            for (key, nested) in properties {
+                violations.append(
+                    contentsOf: exhaustiveRequiredViolations(nested, path: "\(path).\(key)"))
+            }
+        }
+        if let items = fields["items"] {
+            violations.append(contentsOf: exhaustiveRequiredViolations(items, path: "\(path)[]"))
+        }
+        return violations
     }
 
     @Test(

@@ -76,6 +76,31 @@ public protocol RunOperationControlling: Sendable {
         _ context: OperationContext,
         inside operation: SimOperation
     ) async throws
+
+    /// Forgets the recorded current device **inside** an already-held
+    /// operation, and republishes the runtime record without it.
+    ///
+    /// Narrow on purpose. `clearActiveMonkeydo(device:)` cannot do this — it
+    /// only ever *sets* the field, like `publishActiveMonkeydo` — and its
+    /// abort-path callers must keep their existing behaviour. `currentDevice`
+    /// is not cosmetic: `ScreenshotService` reads it to pick a crop rectangle
+    /// and `ButtonInput` reads it to pick a key profile, so a device claim
+    /// that `run_app` has just disproved must not survive into the next
+    /// operation. It would not expire on its own — `requireReady` clears the
+    /// field only when the simulator *process identity* changes.
+    func clearCurrentDevice(inside operation: SimOperation) async throws
+
+    /// Stops the running simulator and starts a fresh one **inside** an
+    /// already-held operation, returning the new process's context.
+    ///
+    /// This exists because the simulator ignores a device change while a
+    /// profile is loaded: `monkeydo` connects, reports success, and keeps
+    /// showing the previous device. Restarting is the only observed remedy.
+    /// It destroys the running app session, its logs and its sessionId.
+    func restartForDeviceChange(
+        requested: SdkInfo,
+        inside operation: SimOperation
+    ) async throws -> OperationContext
 }
 
 extension SimulatorController: RunOperationControlling {
@@ -97,12 +122,23 @@ extension SimulatorController: RunOperationControlling {
 public struct RunCoordinator: Sendable {
     private static let maximumAttempts = 3
 
+    /// How long `run_app` waits for the window title to name the device it
+    /// just launched. Stated, not derived: Gate 8.1 measured absolute
+    /// timestamps spanning a whole `run_app` call
+    /// (`simulator-window-title.json`, `titleTransition`), which cannot be
+    /// reduced to an elapsed-after-launch figure. 5 s sits comfortably above
+    /// the observed idle→loaded intervals and well inside the 30 s launch
+    /// timeout this nests within. See the 2026-08-06 window-title-format
+    /// amendment §5.
+    private static let deviceVerificationTimeout: Duration = .seconds(5)
+
     private let controller: any RunOperationControlling
     private let compiler: any BuildCompiling
     private let sessionManager: AppSessionManager
     private let lifecycle: any MonkeydoProcessLifecycling
     private let connectionProbe: any MonkeydoConnectionProbing
     private let evidenceObserver: (any RunEvidenceObserving)?
+    private let deviceReadback: any DeviceObserving
     private let makeDeadline: @Sendable (Duration) -> ClockDeadline
     private let launchTimeout: Duration
 
@@ -114,6 +150,7 @@ public struct RunCoordinator: Sendable {
         lifecycle: (any MonkeydoProcessLifecycling)? = nil,
         connectionProbe: (any MonkeydoConnectionProbing)? = nil,
         evidenceObserver: (any RunEvidenceObserving)? = nil,
+        deviceReadback: any DeviceObserving = DeviceReadback(),
         launchTimeout: Duration = .seconds(30)
     ) {
         let clock = ContinuousClock()
@@ -125,6 +162,7 @@ public struct RunCoordinator: Sendable {
             ?? MonkeydoProcessLifecycle(processRunner: processRunner)
         self.connectionProbe = connectionProbe ?? MonkeydoConnectionProbe(processRunner: processRunner)
         self.evidenceObserver = evidenceObserver
+        self.deviceReadback = deviceReadback
         self.makeDeadline = { ClockDeadline(clock: clock, timeout: $0) }
         self.launchTimeout = launchTimeout
     }
@@ -137,6 +175,7 @@ public struct RunCoordinator: Sendable {
         lifecycle: (any MonkeydoProcessLifecycling)? = nil,
         connectionProbe: any MonkeydoConnectionProbing,
         evidenceObserver: (any RunEvidenceObserving)? = nil,
+        deviceReadback: any DeviceObserving = DeviceReadback(),
         clock: C,
         launchTimeout: Duration = .seconds(30)
     ) where C.Duration == Duration {
@@ -148,6 +187,7 @@ public struct RunCoordinator: Sendable {
             ?? MonkeydoProcessLifecycle(processRunner: processRunner)
         self.connectionProbe = connectionProbe
         self.evidenceObserver = evidenceObserver
+        self.deviceReadback = deviceReadback
         self.makeDeadline = { ClockDeadline(clock: clock, timeout: $0) }
         self.launchTimeout = launchTimeout
     }
@@ -155,7 +195,27 @@ public struct RunCoordinator: Sendable {
     public func runApp(_ request: RunAppRequest) async throws -> RunAppResult {
         try validate(request.project, matches: request.buildContext)
         return try await controller.withRunAppOperation(requested: request.sdk) { context in
+            // `context` is shadowed deliberately: a device-change restart
+            // replaces the simulator process, and every later use — the
+            // probe's listening endpoints, `revalidateReady`, and the pid
+            // `verifyDevice` reads — must be the new process's. Do not rename
+            // this local to "fix" the shadowing.
+            var context = context
+            var simulatorRestarted = false
+            var invalidatedSessionId: Int?
             do {
+                // Pre-launch: the simulator ignores a device change while a
+                // profile is loaded, so a differing device is corrected here,
+                // before anything is built or launched.
+                if case .device(let loaded, _) = await deviceReadback.observe(
+                    simulatorPid: context.simulatorPid), loaded != request.device
+                {
+                    invalidatedSessionId = await sessionManager.currentSessionId()
+                    context = try await controller.restartForDeviceChange(
+                        requested: request.sdk, inside: .runApp)
+                    simulatorRestarted = true
+                }
+
                 let build = try await compiler.build(BuildRequest(
                     context: request.buildContext,
                     sdk: request.sdk,
@@ -164,84 +224,249 @@ public struct RunCoordinator: Sendable {
                     force: request.rebuild))
                 let prg = try requireArtifact(build)
 
-                try await taggingCleanupSite("runApp.prepareCurrentForReplacement") {
-                    try await sessionManager.prepareCurrentForReplacement()
-                }
-                try await taggingCleanupSite("runApp.terminateActiveMonkeydo") {
-                    try await controller.terminateActiveMonkeydo(inside: .runApp)
-                }
-
-                let deadline = makeDeadline(launchTimeout)
-                var lastError: Error?
-                for attempt in 1...Self.maximumAttempts {
-                    try Task.checkCancellation()
-                    let pending = try await sessionManager.beginPending(MonkeydoCommand(
-                        sdk: request.sdk, prgPath: prg, device: request.device,
-                        testFilter: nil))
-                    var committed = false
-                    do {
-                        let accepted = try await connectionProbe.waitUntilConnected(
-                            owned: pending.owned,
-                            listeningEndpoints: context.listeningEndpoints,
-                            isTestCommand: false,
-                            timeout: deadline.remaining,
-                            elapsedBeforeProbe: launchTimeout - deadline.remaining)
-                        await evidenceObserver?.accepted(accepted)
-                        // Runtime publication is the only fallible step after
-                        // connection proof. Perform it while the candidate is
-                        // still pending and the old session is still current;
-                        // the OS lease prevents another mutating server from
-                        // observing/acting on the staged hint. A failure can
-                        // then abort the candidate without losing old logs.
-                        try await controller.publishActiveMonkeydo(
-                            pending.owned, device: request.device, inside: .runApp)
-                        let sessionID = try await sessionManager.commit(
-                            pending, device: request.device, prgPath: prg, sdk: request.sdk,
-                            acceptedGroup: accepted.launcherGroupMembers.map(\.stableIdentity))
-                        committed = true
-                        guard let wireID = Int(exactly: sessionID) else {
-                            try await taggingCleanupSite("runApp.terminateCurrent") {
-                                try await sessionManager.terminateCurrent(reason: .killed)
-                            }
-                            throw ToolError(
-                                code: "session_id_exhausted",
-                                message: "The app session ID cannot be represented on the public wire contract.",
-                                fix: "Restart simulator-mcp, then retry run_app.")
+                // At most two launches: one, and one more after a restart the
+                // post-launch contradiction demanded. This cannot live in
+                // `launchOnce`'s attempt loop, whose retries mean "monkeydo
+                // exited early", not "the simulator loaded another device".
+                for deviceAttempt in 1...2 {
+                    switch try await launchOnce(
+                        request, prg: prg, rebuilt: build.rebuilt,
+                        rebuildReason: build.rebuildReason, context: context,
+                        simulatorRestarted: simulatorRestarted,
+                        invalidatedSessionId: invalidatedSessionId)
+                    {
+                    case .completed(let result):
+                        return result
+                    case .contradicted(let observed):
+                        guard deviceAttempt == 1 else {
+                            // The recorded device is the claim this call just
+                            // disproved, and nothing downstream would expire
+                            // it: the simulator process is unchanged, so
+                            // `requireReady` keeps it, and the next
+                            // `screenshot` would crop to that device's display
+                            // rect while the next `press_button` would resolve
+                            // its key profile.
+                            try await controller.clearCurrentDevice(inside: .runApp)
+                            throw deviceMismatch(requested: request.device, observed: observed)
                         }
-                        return RunAppResult(
-                            sessionId: wireID,
-                            device: request.device,
-                            prgPath: prg.path,
-                            sdkPath: request.sdk.root.path,
-                            sdkVersion: request.sdk.version.description,
-                            rebuilt: build.rebuilt)
-                    } catch {
-                        var attemptOutput: [String] = []
-                        if committed {
-                            try await taggingCleanupSite("runApp.terminateCurrent") {
-                                try await sessionManager.terminateCurrent(reason: .killed)
-                            }
-                        } else {
-                            attemptOutput = try await taggingCleanupSite("runApp.abortCapturingTail") {
-                                try await sessionManager.abortCapturingTail(pending)
-                            }
-                            try await controller.clearActiveMonkeydo(
-                                expectedLauncher: pending.owned.launcher.stableIdentity,
-                                device: nil,
-                                inside: .runApp)
-                        }
-                        lastError = error
-                        guard isEarlyExit(error), attempt < Self.maximumAttempts,
-                            !deadline.hasExpired
-                        else { throw launchAttemptError(error, output: attemptOutput) }
-                        try await controller.revalidateReady(context, inside: .runApp)
+                        // `invalidatedSessionId` is deliberately NOT set here.
+                        // The only session this path destroyed is the one
+                        // `launchOnce` just created and killed, which the
+                        // caller never received; naming it would report an id
+                        // that was never on the wire. The caller's own
+                        // previous session was replaced by the ordinary
+                        // `prepareCurrentForReplacement`, as every run_app
+                        // does, which this field has never described.
+                        context = try await controller.restartForDeviceChange(
+                            requested: request.sdk, inside: .runApp)
+                        simulatorRestarted = true
                     }
                 }
-                throw lastError ?? launchFailed("monkeydo exhausted its launch attempts")
+                throw launchFailed("run_app exhausted its device-verification attempts")
             } catch {
                 throw translateRunError(error, operation: "run_app")
             }
         }
+    }
+
+    /// One launch of the app, from session replacement through verified
+    /// publication. `.contradicted` means the launch itself succeeded but the
+    /// simulator is showing another device; the session is terminated before
+    /// it is returned, so neither outcome leaves an orphan session behind.
+    private enum LaunchOutcome {
+        case completed(RunAppResult)
+        /// `observed` is the display name the window title named, or nil when
+        /// the title never left idle inside the verification budget. Nil is
+        /// not a display name and must not be reported as one.
+        case contradicted(observed: String?)
+    }
+
+    /// The terminal wrong-device failure. Both shapes state what is true where
+    /// it is thrown: the app session is gone, and the simulator is up and
+    /// still showing the wrong profile — a relaunch failure would have thrown
+    /// out of `restartForDeviceChange` long before this point.
+    private func deviceMismatch(requested: String, observed: String?) -> ToolError {
+        let message =
+            observed.map {
+                "run_app requested \(requested) but the simulator is showing \($0), and a restart did not correct it."
+            }
+            ?? "run_app requested \(requested) but the simulator window title never named a loaded device, even after a restart."
+        return ToolError(
+            code: "device_mismatch",
+            message: message,
+            fix: "Call sim_stop, then sim_start, then retry run_app with this device. The app session run_app launched has been terminated and its logs are gone, and the simulator is still running the wrong device profile.",
+            details: [
+                "requestedDevice": .string(requested),
+                "observedDisplayName": observed.map(JSONValue.string) ?? .null,
+                // The title stayed on the idle constant for the whole budget:
+                // no device was observed at all, as distinct from observing a
+                // different one.
+                "titleNeverLeftIdle": .bool(observed == nil),
+            ])
+    }
+
+    private func launchOnce(
+        _ request: RunAppRequest,
+        prg: URL,
+        rebuilt: Bool,
+        rebuildReason: RebuildReason,
+        context: OperationContext,
+        simulatorRestarted: Bool,
+        invalidatedSessionId: Int?
+    ) async throws -> LaunchOutcome {
+        try await taggingCleanupSite("runApp.prepareCurrentForReplacement") {
+            try await sessionManager.prepareCurrentForReplacement()
+        }
+        try await taggingCleanupSite("runApp.terminateActiveMonkeydo") {
+            try await controller.terminateActiveMonkeydo(inside: .runApp)
+        }
+
+        let deadline = makeDeadline(launchTimeout)
+        var lastError: Error?
+        for attempt in 1...Self.maximumAttempts {
+            try Task.checkCancellation()
+            let pending = try await sessionManager.beginPending(MonkeydoCommand(
+                sdk: request.sdk, prgPath: prg, device: request.device,
+                testFilter: nil))
+            var committed = false
+            do {
+                let accepted = try await connectionProbe.waitUntilConnected(
+                    owned: pending.owned,
+                    listeningEndpoints: context.listeningEndpoints,
+                    isTestCommand: false,
+                    timeout: deadline.remaining,
+                    elapsedBeforeProbe: launchTimeout - deadline.remaining)
+                await evidenceObserver?.accepted(accepted)
+                // Runtime publication is the only fallible step after
+                // connection proof. Perform it while the candidate is
+                // still pending and the old session is still current;
+                // the OS lease prevents another mutating server from
+                // observing/acting on the staged hint. A failure can
+                // then abort the candidate without losing old logs.
+                try await controller.publishActiveMonkeydo(
+                    pending.owned, device: request.device, inside: .runApp)
+                let sessionID = try await sessionManager.commit(
+                    pending, device: request.device, prgPath: prg, sdk: request.sdk,
+                    acceptedGroup: accepted.launcherGroupMembers.map(\.stableIdentity))
+                committed = true
+                guard let wireID = Int(exactly: sessionID) else {
+                    try await taggingCleanupSite("runApp.terminateCurrent") {
+                        try await sessionManager.terminateCurrent(reason: .killed)
+                    }
+                    throw ToolError(
+                        code: "session_id_exhausted",
+                        message: "The app session ID cannot be represented on the public wire contract.",
+                        fix: "Restart simulator-mcp, then retry run_app.")
+                }
+                switch try await verifyDevice(
+                    request.device, simulatorPid: context.simulatorPid)
+                {
+                case .contradicted(let observed):
+                    try await taggingCleanupSite("runApp.terminateCurrent") {
+                        try await sessionManager.terminateCurrent(reason: .killed)
+                    }
+                    // Drop the persisted ownership too, exactly as the failed
+                    // -attempt path does. On the retry a restart would clear
+                    // it anyway; after the second contradiction nothing
+                    // follows the throw, and leaving it would hand the next
+                    // reader a record naming a launcher this call just killed
+                    // — under the very device claim run_app just disproved.
+                    try await controller.clearActiveMonkeydo(
+                        expectedLauncher: pending.owned.launcher.stableIdentity,
+                        device: nil,
+                        inside: .runApp)
+                    return .contradicted(observed: observed)
+                case .verified(let displayName):
+                    return .completed(RunAppResult(
+                        sessionId: wireID,
+                        device: request.device,
+                        prgPath: prg.path,
+                        sdkPath: request.sdk.root.path,
+                        sdkVersion: request.sdk.version.description,
+                        rebuilt: rebuilt,
+                        rebuildReason: rebuildReason,
+                        deviceVerified: true,
+                        deviceVerificationUnavailable: nil,
+                        observedDeviceDisplayName: displayName,
+                        simulatorRestarted: simulatorRestarted,
+                        invalidatedSessionId: invalidatedSessionId))
+                case .unavailable(let reason):
+                    return .completed(RunAppResult(
+                        sessionId: wireID,
+                        device: request.device,
+                        prgPath: prg.path,
+                        sdkPath: request.sdk.root.path,
+                        sdkVersion: request.sdk.version.description,
+                        rebuilt: rebuilt,
+                        rebuildReason: rebuildReason,
+                        deviceVerified: false,
+                        deviceVerificationUnavailable: reason.rawValue,
+                        observedDeviceDisplayName: nil,
+                        simulatorRestarted: simulatorRestarted,
+                        invalidatedSessionId: invalidatedSessionId))
+                }
+            } catch {
+                var attemptOutput: [String] = []
+                if committed {
+                    try await taggingCleanupSite("runApp.terminateCurrent") {
+                        try await sessionManager.terminateCurrent(reason: .killed)
+                    }
+                } else {
+                    attemptOutput = try await taggingCleanupSite("runApp.abortCapturingTail") {
+                        try await sessionManager.abortCapturingTail(pending)
+                    }
+                    try await controller.clearActiveMonkeydo(
+                        expectedLauncher: pending.owned.launcher.stableIdentity,
+                        device: nil,
+                        inside: .runApp)
+                }
+                lastError = error
+                guard isEarlyExit(error), attempt < Self.maximumAttempts,
+                    !deadline.hasExpired
+                else { throw launchAttemptError(error, output: attemptOutput) }
+                try await controller.revalidateReady(context, inside: .runApp)
+            }
+        }
+        throw lastError ?? launchFailed("monkeydo exhausted its launch attempts")
+    }
+
+    private enum DeviceVerification {
+        case verified(displayName: String)
+        /// Nil when the budget expired with the title still idle — the
+        /// verdict is the same, but no display name was ever observed.
+        case contradicted(observed: String?)
+        case unavailable(reason: ReadbackUnavailable)
+    }
+
+    /// The connection proof is a TCP accept between monkeydo and the simulator;
+    /// the window title is updated by the simulator's own UI thread. Nothing
+    /// orders the second after the first, so a single sample here can fail a
+    /// good launch. Poll to a deadline instead, and treat the idle title as
+    /// "not yet", never as an answer — it stops being the idle constant as
+    /// soon as a profile loads.
+    private func verifyDevice(
+        _ requested: String, simulatorPid: pid_t
+    ) async throws -> DeviceVerification {
+        let deadline = makeDeadline(Self.deviceVerificationTimeout)
+        while !deadline.hasExpired {
+            // Cancellation must escape this loop, not be swallowed by it.
+            try Task.checkCancellation()
+            switch await deviceReadback.observe(simulatorPid: simulatorPid) {
+            case .device(let deviceId, let displayName):
+                return deviceId == requested
+                    ? .verified(displayName: displayName)
+                    : .contradicted(observed: displayName)
+            case .unavailable(let reason):
+                // A missing grant will not start working inside this loop.
+                return .unavailable(reason: reason)
+            case .idle:
+                try await deadline.sleepUntilNextPoll(maximumInterval: .milliseconds(50))
+            }
+        }
+        // Still idle at the budget: fail closed, but report no display name.
+        // `DeviceReadback.idleTitle` is a window title, not a device's display
+        // name, and no installed device has it.
+        return .contradicted(observed: nil)
     }
 
     public func runTests(_ request: RunTestsRequest) async throws -> RunTestsResult {

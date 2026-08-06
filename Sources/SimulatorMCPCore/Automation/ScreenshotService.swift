@@ -457,12 +457,18 @@ public struct ScreenshotService: Sendable {
     private let operationRunner: ScreenshotOperationRunner
     private let displayRect: @Sendable (String) -> PixelRect?
     private let makeCapturer: @Sendable (PixelRect?) -> any ScreenshotCapturing
-    private let publish: @Sendable (Data, URL) async throws -> Void
+    private let deviceReadback: any DeviceObserving
+    private let publisher: CapturePublisher
 
-    public init(controller: SimulatorController, deviceCatalog: DeviceCatalog = DeviceCatalog()) {
+    public init(
+        controller: SimulatorController,
+        deviceCatalog: DeviceCatalog = DeviceCatalog(),
+        deviceReadback: any DeviceObserving = DeviceReadback()
+    ) {
         self.init(
             deviceCatalog: deviceCatalog,
-            operationRunner: ScreenshotOperationRunner(controller: controller))
+            operationRunner: ScreenshotOperationRunner(controller: controller),
+            deviceReadback: deviceReadback)
     }
 
     /// Live wiring with an injected runner, so a composing service can supply a
@@ -471,85 +477,77 @@ public struct ScreenshotService: Sendable {
     init(
         deviceCatalog: DeviceCatalog = DeviceCatalog(),
         operationRunner: ScreenshotOperationRunner,
-        makeCapturer: (@Sendable (PixelRect?) -> any ScreenshotCapturing)? = nil
+        makeCapturer: (@Sendable (PixelRect?) -> any ScreenshotCapturing)? = nil,
+        deviceReadback: any DeviceObserving = DeviceReadback(),
+        publisher: CapturePublisher = CapturePublisher()
     ) {
         self.init(
             operationRunner: operationRunner,
             displayRect: { device in
                 deviceCatalog.installedDevices().first { $0.deviceId == device }?.displayRect
             },
-            makeCapturer: makeCapturer ?? { ScreenCaptureKitCapturer(appDisplayRect: $0) })
+            makeCapturer: makeCapturer ?? { ScreenCaptureKitCapturer(appDisplayRect: $0) },
+            deviceReadback: deviceReadback,
+            publisher: publisher)
     }
 
     init(
         operationRunner: ScreenshotOperationRunner,
         displayRect: @escaping @Sendable (String) -> PixelRect?,
         makeCapturer: @escaping @Sendable (PixelRect?) -> any ScreenshotCapturing,
-        publish: @escaping @Sendable (Data, URL) async throws -> Void = {
-            try AtomicFile.replace(at: $1, with: $0)
-        }
+        deviceReadback: any DeviceObserving = DeviceReadback(),
+        publisher: CapturePublisher = CapturePublisher()
     ) {
         self.operationRunner = operationRunner
         self.displayRect = displayRect
         self.makeCapturer = makeCapturer
-        self.publish = publish
+        self.deviceReadback = deviceReadback
+        self.publisher = publisher
     }
 
     public func capture(savePath: String?) async throws -> ScreenshotOutput {
         try await operationRunner.run(.screenshot, requirement: .currentReady) { context in
-            let target = try targetURL(savePath)
+            let target = try publisher.resolveTarget(savePath)
+            // Unchanged: always keyed by the requested/recorded device, never
+            // by the observation below. Deriving it from the observation
+            // would null it whenever the readback is unavailable but the
+            // capture still succeeds (the readback requires `isVisible` too,
+            // which capture does not), losing the rect this always had.
             let logicalDisplayRect = context.currentDevice.flatMap(displayRect)
             let captured = try await makeCapturer(logicalDisplayRect)
                 .captureWindow(pid: context.simulatorPid)
-            try await publish(captured.data, target)
+            let path = try publisher.publish(captured.data, to: target)
+
+            // Only these three identity fields come from the observation. A
+            // capture never claims a device it did not observe.
+            let observation = await deviceReadback.observe(simulatorPid: context.simulatorPid)
+            let observedDevice: String? = {
+                if case .device(let deviceId, _) = observation { return deviceId }
+                return nil
+            }()
+            let observedDisplayName: String? = {
+                if case .device(_, let displayName) = observation { return displayName }
+                return nil
+            }()
+            let nativeResolution: DisplaySize? = observedDevice.flatMap(displayRect).map {
+                DisplaySize(width: $0.width, height: $0.height)
+            }
+
             return ScreenshotOutput(
                 result: ScreenshotResult(
-                    path: target.path,
+                    path: path.path,
                     mimeType: "image/png",
                     width: captured.width,
                     height: captured.height,
                     capturedPid: context.simulatorPid,
+                    device: observedDevice,
+                    deviceDisplayName: observedDisplayName,
+                    nativeResolution: nativeResolution,
                     appDisplayRect: captured.appDisplayRect.map {
                         DisplayRect(x: $0.x, y: $0.y, width: $0.width, height: $0.height)
                     }),
                 png: captured.data)
         }
-    }
-
-    private func targetURL(_ savePath: String?) throws -> URL {
-        let target: URL
-        if let savePath {
-            let expanded = (savePath as NSString).expandingTildeInPath
-            target = URL(fileURLWithPath: expanded)
-                .resolvingSymlinksInPath().standardizedFileURL
-        } else {
-            let directory = URL(
-                fileURLWithPath: "/tmp/simulator-mcp", isDirectory: true)
-            do {
-                try FileManager.default.createDirectory(
-                    at: directory, withIntermediateDirectories: true)
-            } catch {
-                Log.err("screenshot temporary directory creation failed: \(String(reflecting: error))")
-                throw ToolError(
-                    code: "internal_error",
-                    message: "Could not create the temporary screenshot directory.",
-                    fix: "Ensure /tmp is writable, then retry screenshot.")
-            }
-            target = directory.appending(path: "\(UUID().uuidString).png")
-        }
-
-        var isDirectory: ObjCBool = false
-        let parent = target.deletingLastPathComponent()
-        guard FileManager.default.fileExists(atPath: parent.path, isDirectory: &isDirectory),
-            isDirectory.boolValue
-        else {
-            throw ToolError(
-                code: "invalid_arguments",
-                message: "Screenshot destination parent directory does not exist: \(parent.path).",
-                fix: "Create the parent directory, then retry screenshot with that savePath.",
-                details: ["parent": .string(parent.path)])
-        }
-        return target
     }
 }
 

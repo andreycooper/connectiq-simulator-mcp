@@ -401,18 +401,24 @@ private enum Samples {
         deviceId: "fenix6xpro", displayName: "fenix 6X Pro", touch: false,
         buttons: [], inputSupported: false, inputProfile: nil)])
     static let build = BuildResult(
-        succeeded: true, prgPath: "/tmp/app.prg", rebuilt: true, artifactKey: "key",
+        succeeded: true, prgPath: "/tmp/app.prg", rebuilt: true, rebuildReason: .cacheMiss,
+        artifactKey: "key",
         sdk: "/sdk", device: "fenix6xpro", mode: .debugApp, diagnostics: [])
     static let status = SimStatusResult(
         state: .ready, operation: nil, pid: 42, executablePath: "/sdk/simulator",
         sdkPath: "/sdk", sdkVersion: "9.1.0", currentDevice: "fenix6xpro",
+        requestedDevice: "fenix6xpro", deviceSource: "observed",
         leaseHolder: "pid=9 operation=run_tests")
     static let stopped = SimStatusResult(
         state: .notRunning, operation: nil, pid: nil, executablePath: nil, sdkPath: nil,
-        sdkVersion: nil, currentDevice: nil, leaseHolder: nil)
+        sdkVersion: nil, currentDevice: nil, requestedDevice: nil, deviceSource: "unobserved",
+        leaseHolder: nil)
     static let app = RunAppResult(
         sessionId: 1, device: "fenix6xpro", prgPath: "/tmp/app.prg", sdkPath: "/sdk",
-        sdkVersion: "9.1.0", rebuilt: true)
+        sdkVersion: "9.1.0", rebuilt: true, rebuildReason: .cacheMiss,
+        deviceVerified: true, deviceVerificationUnavailable: nil,
+        observedDeviceDisplayName: "fēnix® 6X Pro", simulatorRestarted: false,
+        invalidatedSessionId: nil)
     static let tests = RunTestsResult(
         passed: 2, failed: 0, errors: 0, overallPassed: true,
         perTest: [
@@ -426,7 +432,9 @@ private enum Samples {
     static let png = Data("png".utf8)
     static let screenshot = ScreenshotResult(
         path: "/tmp/shot.png", mimeType: "image/png", width: 10, height: 20,
-        capturedPid: 42, appDisplayRect: nil)
+        capturedPid: 42,
+        device: "fenix6xpro", deviceDisplayName: "fēnix 6X Pro",
+        nativeResolution: DisplaySize(width: 280, height: 280), appDisplayRect: nil)
     static let gps = SetGpsPositionResult(
         latitude: 48.1351, longitude: 11.582, simulatorPid: 42)
 }

@@ -1,0 +1,111 @@
+{
+  "gate": "8.1 — window title contract",
+  "measuredAt": "2026-08-06",
+  "machine": "Darwin 25.5.0 arm64",
+  "probe": "docs/verification/probes/window-title/probe.swift",
+  "api": "CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements]) + kCGWindowName",
+
+  "verdict": "FAILED AS SPECIFIED — see the 2026-08-06 window-title-format amendment.",
+  "titleEqualsDisplayName": false,
+  "titleFormat": "CIQ Simulator - <compiler.json displayName> (<device version>)",
+  "idleTitle": "CIQ Simulator",
+
+  "screenRecordingRequired": true,
+  "screenRecordingNote": "kCGWindowName is redacted without the grant. A `swift <file>` script run from a granted terminal DOES read titles — measured — so the probe needs no separate grant of its own.",
+
+  "simulatorWindowCount": 1,
+  "windowLayer": 0,
+  "windowCountNote": "Every observation across both SDKs and five loaded states found exactly one layer-0 window owned by the simulator pid, idle and loaded alike.",
+
+  "duplicateDisplayNames": [],
+  "duplicateDisplayNamesNote": "162 installed devices parsed, 162 distinct displayName values, 0 duplicates and 0 unreadable. The ambiguous-display-name branch is defensive, not an observed hazard.",
+
+  "observations": [
+    {
+      "sdk": "9.1.0",
+      "state": "idle",
+      "windowTitle": "CIQ Simulator",
+      "note": "Observed on three separate simulator processes (65248, 66739, 70037)."
+    },
+    {
+      "sdk": "9.1.0",
+      "deviceId": "fenix6xpro",
+      "compilerJsonDisplayName": "fēnix® 6X Pro / 6X Sapphire / 6X Pro Solar / tactix® Delta Sapphire / Delta Solar / Delta Solar - Ballistics Edition / quatix® 6X / 6X Solar / 6X Dual Power",
+      "windowTitle": "CIQ Simulator - fēnix® 6X Pro / 6X Sapphire / 6X Pro Solar / tactix® Delta Sapphire / Delta Solar / Delta Solar - Ballistics Edition / quatix® 6X / 6X Solar / 6X Dual Power (3.4.5)",
+      "versionSuffix": "3.4.5"
+    },
+    {
+      "sdk": "9.1.0",
+      "deviceId": "fenix7s",
+      "compilerJsonDisplayName": "fēnix® 7S",
+      "windowTitle": "CIQ Simulator - fēnix® 7S (5.2.0)",
+      "versionSuffix": "5.2.0"
+    },
+    {
+      "sdk": "9.1.0",
+      "deviceId": "fenix843mm",
+      "compilerJsonDisplayName": "fēnix® 8 43mm",
+      "windowTitle": "CIQ Simulator - fēnix® 8 43mm (6.0.0)",
+      "versionSuffix": "6.0.0"
+    },
+    {
+      "sdk": "9.1.0",
+      "deviceId": "enduro3",
+      "compilerJsonDisplayName": "Enduro™ 3",
+      "windowTitle": "CIQ Simulator - Enduro™ 3 (6.0.0)",
+      "versionSuffix": "6.0.0",
+      "note": "The non-fēnix sample. Same format — the contract is not a fēnix-family artifact."
+    },
+    {
+      "sdk": "8.4.1",
+      "state": "idle",
+      "windowTitle": "CIQ Simulator"
+    },
+    {
+      "sdk": "8.4.1",
+      "deviceId": "fenix6xpro",
+      "windowTitle": "CIQ Simulator - fēnix® 6X Pro / 6X Sapphire / 6X Pro Solar / tactix® Delta Sapphire / Delta Solar / Delta Solar - Ballistics Edition / quatix® 6X / 6X Solar / 6X Dual Power (3.4.5)",
+      "identicalToSdk910": true
+    },
+    {
+      "sdk": "8.4.1",
+      "deviceId": "fenix7s",
+      "windowTitle": "CIQ Simulator - fēnix® 7S (5.2.0)",
+      "identicalToSdk910": true
+    }
+  ],
+
+  "versionSuffixNote": "The parenthesised version is the DEVICE's, not the SDK's: fenix6xpro reports (3.4.5) and fenix7s (5.2.0) on both 8.4.1 and 9.1.0, byte-identical across SDKs. It must not be parsed as an SDK version, and it must not be required to match anything — it is skipped, not validated.",
+
+  "titleTransition": {
+    "samples": 2,
+    "method": "In-process CGWindowList poll at 20ms (docs/verification/probes/window-title/, titlepoll), started before run_app and compared against the wall clock immediately after run_app returned.",
+    "sample1": {
+      "idleObservedAt": 1786003376.2770,
+      "deviceTitleAt": 1786003387.9172,
+      "runAppReturnedByAt": 1786003393.7088,
+      "marginSecondsBeforeReturn": 5.79,
+      "includedBuild": true
+    },
+    "sample2": {
+      "idleObservedAt": 1786003433.3712,
+      "deviceTitleAt": 1786003442.1005,
+      "runAppReturnedByAt": 1786003452.8024,
+      "marginSecondsBeforeReturn": 10.70,
+      "includedBuild": false
+    },
+    "conclusion": "The title becomes non-idle DURING run_app and well before it returns — by 5.79s and 10.70s in two samples. The transition is not instantaneous with launch, so a readback taken at an arbitrary instant is not self-evidently safe; but at run_app's return the title is reliably settled.",
+    "limitation": "The run_app return timestamps are UPPER bounds: they were taken by the controlling agent on the turn after the tool returned, so they include agent round-trip latency. More importantly, this method cannot observe the boundary that actually matters — whether the flip precedes the server's internal post-connection-proof readback point, which is inside the call and invisible from outside. The bounded poll in the design is therefore retained as the safe construction, not discarded on the strength of these margins."
+  },
+
+  "deviceSwitchDefect": {
+    "note": "Gate 8.1 reproduced the A1 defect it exists to detect, live, against the installed v0.5.0 server.",
+    "sequence": [
+      "run_app(device: fenix6xpro) -> ok, sessionId 1; window title = fēnix 6X Pro",
+      "run_app(device: fenix7s)    -> ok, sessionId 2, device 'fenix7s'; window title STILL fēnix 6X Pro",
+      "sim_status                  -> currentDevice 'fenix7s' while the window showed fēnix 6X Pro",
+      "sim_stop + sim_start + run_app(device: fenix7s) -> window title = fēnix® 7S"
+    ],
+    "conclusion": "Both symptoms in the consumer report are confirmed on this machine: the launch is reported successful for a device the simulator never loaded, and sim_status echoes the requested device as though it were observed. The window title detects it; nothing else in the current tool surface does."
+  }
+}

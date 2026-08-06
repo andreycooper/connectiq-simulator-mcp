@@ -71,7 +71,9 @@ struct ScreenshotServiceTests {
     }
 
     @Test("cancellation propagates and exits the screenshot operation")
-    func cancellation() async {
+    func cancellation() async throws {
+        let temp = try TempScreenshot()
+        defer { temp.remove() }
         let clock = FakeClock()
         let events = EventLog()
         let runner = ScreenshotOperationRunner { _, _, body in
@@ -97,7 +99,9 @@ struct ScreenshotServiceTests {
                         png: Data([1]), width: 1, height: 1,
                         windowWidth: 1, windowHeight: 1)
                 },
-                clock: clock) })
+                clock: clock) },
+            deviceReadback: ScriptedReadback([]),
+            publisher: CapturePublisher(directory: temp.root))
         let result = Task { () -> Bool in
             do {
                 _ = try await service.capture(savePath: nil)
@@ -313,6 +317,7 @@ struct ScreenshotServiceTests {
             await events.append("operation:end")
             return value
         }
+        let capturedData = validPNG(padding: 8)
         let service = ScreenshotService(
             operationRunner: runner,
             displayRect: { device in
@@ -322,22 +327,35 @@ struct ScreenshotServiceTests {
             makeCapturer: { rect in
                 #expect(rect == PixelRect(x: 1, y: 2, width: 3, height: 4))
                 return FakeCapturer(events: events, png: CapturedPNG(
-                    data: Data("new-png".utf8), width: 10, height: 20,
+                    data: capturedData, width: 10, height: 20,
                     appDisplayRect: PixelRect(x: 2, y: 4, width: 6, height: 8)))
             },
-            publish: { data, url in
-                await events.append("publish")
-                try AtomicFile.replace(at: url, with: data)
-            })
+            deviceReadback: ScriptedReadback([]),
+            publisher: CapturePublisher(directory: temp.root))
 
         let output = try await service.capture(savePath: target.path)
 
-        #expect(await events.values == ["operation:screenshot", "capture", "publish", "operation:end"])
-        #expect(output.png == Data("new-png".utf8))
+        // No "publish" event: publication now happens inside CapturePublisher,
+        // which has no closure seam to record through — assert on the file it
+        // wrote instead, below.
+        #expect(await events.values == ["operation:screenshot", "capture", "operation:end"])
+        #expect(output.png == capturedData)
         #expect(output.result.path == target.path)
         #expect(output.result.capturedPid == 42)
         #expect(output.result.appDisplayRect == DisplayRect(x: 2, y: 4, width: 6, height: 8))
-        #expect(try Data(contentsOf: target) == Data("new-png".utf8))
+        #expect(try Data(contentsOf: target) == capturedData)
+        // The one case that pins the fallback shut: a real currentDevice
+        // ("fenix6xpro") together with a dry readback. A capture must never
+        // relabel itself with the *requested* device when the observation
+        // fails — that is the exact defect this task exists to prevent (a
+        // fenix6xpro frame silently filed as the requested device's
+        // evidence). Only captureLeavesIdentityNullWhenUnobserved exercises
+        // an unavailable readback elsewhere, and its context has no
+        // currentDevice, so a `?? context.currentDevice` fallback there
+        // yields nil either way and the assertion would hold vacuously.
+        #expect(output.result.device == nil)
+        #expect(output.result.deviceDisplayName == nil)
+        #expect(output.result.nativeResolution == nil)
     }
 
     @Test("encoder failure retains an existing destination")
@@ -351,7 +369,9 @@ struct ScreenshotServiceTests {
             operationRunner: ScreenshotOperationRunner.immediate(
                 context: operationContext(device: nil)),
             displayRect: { _ in nil },
-            makeCapturer: { _ in ThrowingCapturer() })
+            makeCapturer: { _ in ThrowingCapturer() },
+            deviceReadback: ScriptedReadback([]),
+            publisher: CapturePublisher(directory: temp.root))
 
         await #expect(throws: ToolError.self) {
             try await service.capture(savePath: target.path)
@@ -360,13 +380,17 @@ struct ScreenshotServiceTests {
     }
 
     @Test("a missing destination parent is rejected before capture")
-    func missingParent() async {
+    func missingParent() async throws {
+        let temp = try TempScreenshot()
+        defer { temp.remove() }
         let calls = CallCount()
         let service = ScreenshotService(
             operationRunner: ScreenshotOperationRunner.immediate(
                 context: operationContext(device: nil)),
             displayRect: { _ in nil },
-            makeCapturer: { _ in CountingCapturer(calls: calls) })
+            makeCapturer: { _ in CountingCapturer(calls: calls) },
+            deviceReadback: ScriptedReadback([]),
+            publisher: CapturePublisher(directory: temp.root))
         let target = "/tmp/missing-\(UUID().uuidString)/shot.png"
         await #expect(throws: ToolError.self) {
             try await service.capture(savePath: target)
@@ -374,24 +398,25 @@ struct ScreenshotServiceTests {
         #expect(await calls.value == 0)
     }
 
-    @Test("the default destination is a UUID PNG under literal /tmp/simulator-mcp")
+    @Test("the default destination is a UUID PNG under the publisher's managed directory")
     func defaultDestination() async throws {
-        let published = PublishedTarget()
+        let temp = try TempScreenshot()
+        defer { temp.remove() }
         let service = ScreenshotService(
             operationRunner: ScreenshotOperationRunner.immediate(
                 context: operationContext(device: nil)),
             displayRect: { _ in nil },
             makeCapturer: { _ in StaticCapturer() },
-            publish: { data, url in await published.record(data: data, url: url) })
+            deviceReadback: ScriptedReadback([]),
+            publisher: CapturePublisher(directory: temp.root))
 
         let output = try await service.capture(savePath: nil)
         let outputURL = URL(fileURLWithPath: output.result.path)
 
-        #expect(outputURL.deletingLastPathComponent().path == "/tmp/simulator-mcp")
+        #expect(outputURL.deletingLastPathComponent().path == temp.root.path)
         #expect(outputURL.pathExtension == "png")
         #expect(UUID(uuidString: outputURL.deletingPathExtension().lastPathComponent) != nil)
-        #expect(await published.url == outputURL)
-        #expect(await published.data == output.png)
+        #expect(try Data(contentsOf: outputURL) == output.png)
     }
 
     @Test("display rectangle scales independently and clamps partial overflow")
@@ -504,11 +529,110 @@ struct ScreenshotServiceTests {
 
         let result = ScreenshotResult(
             path: "/tmp/shot.png", mimeType: "image/png", width: 2, height: 1,
-            capturedPid: 42, appDisplayRect: nil)
+            capturedPid: 42,
+            device: nil, deviceDisplayName: nil, nativeResolution: nil,
+            appDisplayRect: nil)
         let encoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(result))
             as? [String: Any]
         #expect(encoded?.keys.contains("appDisplayRect") == true)
         #expect(encoded?["appDisplayRect"] is NSNull)
+        #expect(encoded?.keys.contains("device") == true)
+        #expect(encoded?["device"] is NSNull)
+        #expect(encoded?.keys.contains("deviceDisplayName") == true)
+        #expect(encoded?["deviceDisplayName"] is NSNull)
+        #expect(encoded?.keys.contains("nativeResolution") == true)
+        #expect(encoded?["nativeResolution"] is NSNull)
+    }
+
+    @Test("a capture carries the observed device and its native resolution")
+    func captureCarriesDeviceIdentity() async throws {
+        let service = screenshotFixture(
+            readback: ScriptedReadback([
+                .device(deviceId: "fenix6xpro", displayName: "fēnix 6X Pro")
+            ]),
+            devices: [
+                InstalledDevice(
+                    deviceId: "fenix6xpro", displayName: "fēnix 6X Pro", touch: false,
+                    physicalKeyIds: [], displayRect: PixelRect(x: 76, y: 141, width: 280, height: 280))
+            ])
+
+        let output = try await service.capture(savePath: nil)
+
+        #expect(output.result.device == "fenix6xpro")
+        #expect(output.result.deviceDisplayName == "fēnix 6X Pro")
+        #expect(output.result.nativeResolution == DisplaySize(width: 280, height: 280))
+    }
+
+    @Test("an unobservable device leaves the identity fields null, never guessed")
+    func captureLeavesIdentityNullWhenUnobserved() async throws {
+        let service = screenshotFixture(
+            readback: ScriptedReadback([.unavailable(reason: .screenRecordingDenied)]),
+            devices: [])
+
+        let output = try await service.capture(savePath: nil)
+
+        #expect(output.result.device == nil)
+        #expect(output.result.deviceDisplayName == nil)
+        #expect(output.result.nativeResolution == nil)
+    }
+
+    @Test("appDisplayRect stays keyed by the requested device, never the observed one")
+    func appDisplayRectIgnoresObservation() async throws {
+        // context.currentDevice ("fenix6xpro") and the observed device
+        // ("fenix7s") disagree on purpose: appDisplayRect must still resolve
+        // from the requested device, and the identity fields must still
+        // resolve from the observed one — two independent lookups sharing
+        // one `displayRect` closure.
+        let devices = [
+            InstalledDevice(
+                deviceId: "fenix6xpro", displayName: "fēnix 6X Pro", touch: false,
+                physicalKeyIds: [], displayRect: PixelRect(x: 76, y: 141, width: 280, height: 280)),
+            InstalledDevice(
+                deviceId: "fenix7s", displayName: "fēnix 7S", touch: false,
+                physicalKeyIds: [], displayRect: PixelRect(x: 10, y: 20, width: 100, height: 100)),
+        ]
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appending(path: "shot-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let service = ScreenshotService(
+            operationRunner: .immediate(context: operationContext(device: "fenix6xpro")),
+            displayRect: { device in devices.first { $0.deviceId == device }?.displayRect },
+            makeCapturer: { rect in StubCapturer(appDisplayRect: rect) },
+            deviceReadback: ScriptedReadback([
+                .device(deviceId: "fenix7s", displayName: "fēnix 7S")
+            ]),
+            publisher: CapturePublisher(directory: directory))
+
+        let output = try await service.capture(savePath: nil)
+
+        #expect(output.result.device == "fenix7s")
+        #expect(output.result.nativeResolution == DisplaySize(width: 100, height: 100))
+        // The requested device's rect (fenix6xpro), never the observed
+        // device's (fenix7s) — StubCapturer echoes back whatever rect
+        // makeCapturer was given, so this pins which lookup fed it.
+        #expect(output.result.appDisplayRect == DisplayRect(x: 76, y: 141, width: 280, height: 280))
+    }
+}
+
+private func screenshotFixture(
+    readback: some DeviceObserving, devices: [InstalledDevice]
+) -> ScreenshotService {
+    let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+        .appending(path: "shot-\(UUID().uuidString)")
+    try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    return ScreenshotService(
+        operationRunner: .immediate(context: operationContext(device: nil)),
+        displayRect: { device in devices.first { $0.deviceId == device }?.displayRect },
+        makeCapturer: { rect in StubCapturer(appDisplayRect: rect) },
+        deviceReadback: readback,
+        publisher: CapturePublisher(directory: directory))
+}
+
+private struct StubCapturer: ScreenshotCapturing {
+    let appDisplayRect: PixelRect?
+    func captureWindow(pid: Int32) async throws -> CapturedPNG {
+        CapturedPNG(
+            data: validPNG(padding: 8), width: 454, height: 454, appDisplayRect: appDisplayRect)
     }
 }
 
@@ -556,22 +680,13 @@ private struct CountingCapturer: ScreenshotCapturing {
     let calls: CallCount
     func captureWindow(pid: Int32) async throws -> CapturedPNG {
         await calls.increment()
-        return CapturedPNG(data: Data([1]), width: 1, height: 1, appDisplayRect: nil)
+        return CapturedPNG(data: validPNG(padding: 8), width: 1, height: 1, appDisplayRect: nil)
     }
 }
 
 private struct StaticCapturer: ScreenshotCapturing {
     func captureWindow(pid: Int32) async throws -> CapturedPNG {
-        CapturedPNG(data: Data("png".utf8), width: 1, height: 1, appDisplayRect: nil)
-    }
-}
-
-private actor PublishedTarget {
-    private(set) var data: Data?
-    private(set) var url: URL?
-    func record(data: Data, url: URL) {
-        self.data = data
-        self.url = url
+        CapturedPNG(data: validPNG(padding: 8), width: 1, height: 1, appDisplayRect: nil)
     }
 }
 

@@ -109,6 +109,29 @@ heuristic, guess another constant, or skip a gate.
   - Bounds: 20 steps, 3 screenshots, 20 s of declared waits. The frame cap is
     measured, not guessed — a simulator window PNG is ~973 KB, so each frame is
     about a megabyte of base64 in the response.
+- **Device readback:** `run_app` never reports a device it has not observed.
+  The loaded device is read back from the simulator's window title, whose
+  measured format is `CIQ Simulator - <display name> (<device version>)`, with
+  the bare constant `CIQ Simulator` when idle
+  (`simulator-window-title.json`). Three facts are load-bearing. The
+  parenthesised version is the **device's**, not the SDK's — it is skipped,
+  never parsed and never required to match. `kCGWindowName` is **redacted
+  without the Screen Recording grant**, so a denied grant makes the readback
+  unavailable and the launch reports `deviceVerified: false` rather than
+  guessing — fail open on the launch, fail closed on the claim. And the
+  post-launch readback is a **bounded poll**, not a single sample: the title
+  flips during the call, and the margin measured from outside cannot see the
+  boundary that matters.
+- **Captures are verified, and the server owns their directory.**
+  `CapturePublisher` places every capture. The default target is
+  `~/.simulator-mcp/screenshots/<UUID>.png`, deliberately not world-writable
+  `/tmp`. Bytes land in a hidden staging sibling first, are read back and
+  measured against the in-memory image, and only a full-length file is promoted
+  by one atomic rename, so a short write fails `capture_write_short` instead of
+  leaving a truncated file and an existing file is never partially overwritten.
+  Retention is 200 files / 24 h and deletes **only** files the publisher named
+  itself; a caller's `savePath` is never garbage-collected and never unlinked
+  on failure.
 - **Secrets:** `SIM_DEVELOPER_KEY` points to a Connect IQ developer key
   stored **outside** this repository. No key material is ever committed.
 
@@ -128,6 +151,21 @@ for behavior a caller gets wrong by reasonable assumption.
   lost, not deferred. And a marker printed **without a trailing newline is not
   yet a log line** — it stays invisible until the app exits. `System.println`
   appends one.
+- **A successful `run_app` is not by itself proof of the device.** Read
+  `deviceVerified`: true means the loaded device was read back and matched the
+  request; false comes with `deviceVerificationUnavailable` (for example
+  `"screenRecordingDenied"`) and means the launch succeeded but the device is
+  unconfirmed. Requesting a different device **restarts the simulator**, which
+  destroys the running session — `invalidatedSessionId` names the value you can
+  no longer read logs from — and adds roughly 40 seconds. `sim_status`
+  distinguishes the two facts callers used to conflate: `currentDevice` is what
+  was observed, `requestedDevice` is what was asked for, and `deviceSource`
+  says which one you are looking at.
+- **`screenshot` without a `savePath` does not write to `/tmp`.** It writes to
+  `~/.simulator-mcp/screenshots/`, which the server prunes on its own schedule
+  — do not treat a returned path as durable storage. Pass `savePath` for
+  anything you intend to keep; those files are never pruned. The same argument
+  works on a `run_sequence` screenshot step.
 - **`run_app` and `run_tests` do not trust the child's exit code.** monkeydo's
   is unreliable (SDK regex bug), so `run_tests` totals and per-test results come
   from parsing the transcript. Ownership is established only after an exact

@@ -52,6 +52,7 @@ public struct BuildOutcome: Equatable, Sendable {
     public let succeeded: Bool
     public let prgPath: URL?
     public let rebuilt: Bool
+    public let rebuildReason: RebuildReason
     public let artifactKey: String
     public let device: String
     public let mode: BuildMode
@@ -61,6 +62,7 @@ public struct BuildOutcome: Equatable, Sendable {
         succeeded: Bool,
         prgPath: URL?,
         rebuilt: Bool,
+        rebuildReason: RebuildReason,
         artifactKey: String,
         device: String,
         mode: BuildMode,
@@ -69,6 +71,7 @@ public struct BuildOutcome: Equatable, Sendable {
         self.succeeded = succeeded
         self.prgPath = prgPath
         self.rebuilt = rebuilt
+        self.rebuildReason = rebuildReason
         self.artifactKey = artifactKey
         self.device = device
         self.mode = mode
@@ -149,18 +152,23 @@ public struct Compiler: BuildCompiling, Sendable {
             // the same target that just published is observed here as a
             // reusable artifact instead of being rebuilt or clobbered.
             let key = try store.compatibilityKey(for: request)
+            let reusable = try store.reusableArtifact(paths: paths, key: key)
 
-            if !request.force, try store.reusableArtifact(paths: paths, key: key) != nil {
+            if !request.force, reusable != nil {
                 return BuildOutcome(
                     succeeded: true,
                     prgPath: paths.target,
                     rebuilt: false,
+                    rebuildReason: .cacheHit,
                     artifactKey: key.key,
                     device: request.device,
                     mode: request.mode,
                     diagnostics: []
                 )
             }
+
+            let reason: RebuildReason =
+                request.force ? .forced : store.rebuildReason(paths: paths, key: key)
 
             let temporary = paths.bin.appending(
                 path: ".\(paths.target.lastPathComponent).\(UUID().uuidString).tmp")
@@ -216,6 +224,7 @@ public struct Compiler: BuildCompiling, Sendable {
                     succeeded: false,
                     prgPath: nil,
                     rebuilt: false,
+                    rebuildReason: reason,
                     artifactKey: key.key,
                     device: request.device,
                     mode: request.mode,
@@ -229,6 +238,7 @@ public struct Compiler: BuildCompiling, Sendable {
                 succeeded: true,
                 prgPath: paths.target,
                 rebuilt: true,
+                rebuildReason: reason,
                 artifactKey: key.key,
                 device: request.device,
                 mode: request.mode,

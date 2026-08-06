@@ -76,6 +76,13 @@ struct DoctorToolTests {
         #expect(await recorder.requests == [.init(requestPermissions: false)])
     }
 
+    @Test("the doctor note carries no internal task numbering")
+    func doctorNoteHasNoTaskNumbers() {
+        let note = Permissions.responsibleProcessNote
+        #expect(!note.contains("Task "))
+        #expect(note.contains("responsible"))
+    }
+
     @Test("public doctor handler opts into prompts explicitly and rejects unknown fields")
     func handlerExplicitPromptAndStrictSchema() async throws {
         let recorder = DoctorRequestRecorder()

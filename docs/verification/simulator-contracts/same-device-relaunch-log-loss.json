@@ -1,0 +1,54 @@
+{
+  "defect": "same-device relaunch loses log capture",
+  "discoveredDuring": "Task 12 Step 2 (Gate 8.2 device-switch live acceptance test)",
+  "measuredAt": "2026-08-06",
+  "machine": "Darwin 25.5.0 arm64",
+  "attribution": "PRE-EXISTING. Present in shipped v0.5.0. NOT introduced by, and NOT fixed by, the feature/device-capture-trust branch.",
+  "scope": "Out of scope for this release. The device-switch defect this branch closes (see simulator-window-title.json and the deviceSwitchDefect entry it documents) is a different bug: it is about the WRONG device being reported/loaded after a switch. This defect fires with NO device change at all.",
+  "reproduction": {
+    "steps": [
+      "1. sim_start.",
+      "2. run_app(projectPath: Tests/fixtures/testapp, device: <deviceX>, rebuild: true) -> returns sessionId N. get_logs(sessionId: N) returns real lines, including the fixture's own markers (e.g. FIXTURE_STARTED, FIXTURE_SCREEN_WIDTH <width>).",
+      "3. run_app with the SAME device again (no device change, so simulatorRestarted is correctly false) -> returns a NEW sessionId N+1.",
+      "4. get_logs(sessionId: N+1) returns zero lines, with state: \"running\", crashDetected: false, exitCode: null, terminationReason: null. Reading again after a delay still returns zero lines.",
+      "5. Independently confirmed the relaunched app is genuinely running, not crashed or hung before its first frame: a screenshot during the zero-lines window shows the fixture's normal rendered content, and `ps` shows exactly one live monkeydo/java process for that PRG."
+    ]
+  },
+  "observations": [
+    {
+      "label": "feature/device-capture-trust worktree build, via the installed signed server, inside DeviceSwitchIntegrationTests.deviceSwitchRoundTrip",
+      "build": "worktree feature/device-capture-trust, commit e53051d and the reframing that followed it",
+      "sequence": "A (fenix6xpro, session 1) -> B (fenix7s, session 2, switch+restart) -> A (fenix6xpro, session 3, switch+restart) -> A (fenix6xpro, session 4, SAME device, no switch)",
+      "sessionsWithWorkingLogCapture": [1, 2, 3],
+      "sessionWithLostLogCapture": 4,
+      "linesSeenForSession4After30s": 0,
+      "getLogsStateForSession4": "running",
+      "crashDetected": false,
+      "exitCode": null,
+      "terminationReason": null,
+      "note": "Sessions 1-3 all corroborated correctly via the fixture's own FIXTURE_SCREEN_WIDTH marker read back through get_logs, matched against each device's real simulator.json display width. Only session 4 (same-device relaunch, no restart) lost log capture."
+    },
+    {
+      "label": "shipped v0.5.0 server process (already running, spawned before this branch's install), driven directly via its MCP tools by the coordinating session",
+      "build": "installed ~/.simulator-mcp/bin/simulator-mcp as it existed before this branch's install replaced it",
+      "sequence": "run_app(fenix6xpro) -> session 13; run_app(fenix6xpro) again, same device, no switch -> session 14",
+      "session13": {
+        "linesLogged": 37,
+        "includesMarker": "FIXTURE_SCREEN_WIDTH 280"
+      },
+      "session14": {
+        "linesLogged": 0,
+        "getLogsState": "running",
+        "readTwice": true,
+        "note": "Read twice, zero lines both times."
+      },
+      "note": "Reproduces byte-for-byte on the release the consumer already has installed. This is the observation that establishes the defect predates this branch."
+    }
+  ],
+  "notKnown": [
+    "Whether the app's console output is actually LOST (never produced, or produced and discarded somewhere in the simulator/monkeydo pipeline) or merely UNROUTED (produced and sitting somewhere get_logs for the new session never looks). Not distinguished by anything observed here.",
+    "Whether an intervening sim_stop/sim_start (as opposed to a same-device run_app relaunch with no restart) is the only thing that restores log capture for a following launch. Not tested.",
+    "Whether this is specific to a same-device relaunch specifically, or would also occur on any relaunch that does not go through restartForDeviceChange's simulator-process replacement. Not tested beyond the same-device case."
+  ],
+  "reframesConsumerReport": "The original consumer report (the one that motivated this release, ground truth in simulator-window-title.json's deviceSwitchDefect) listed 'get_logs returned lines: [] for the phantom session' as a symptom of the device-switch bug (A1). Given this defect fires with no device change at all, some of what the consumer attributed to A1 was probably this second, independent bug instead."
+}

@@ -21,6 +21,11 @@ actor FakeSimulatorSystem {
     private var exitOnSignal: Int32 = 15
     private var lookupCount = 0
     private var lookupHook: @Sendable (Int) async -> Void = { _ in }
+    private let trace: SignalRecorder<String>?
+
+    init(trace: SignalRecorder<String>? = nil) {
+        self.trace = trace
+    }
 
     nonisolated func identity(pid: Int32, sdk: SdkInfo) -> SimulatorProcessIdentity {
         SimulatorProcessIdentity(
@@ -61,6 +66,11 @@ actor FakeSimulatorSystem {
 
     func sendSignal(pid: Int32, signal: Int32) {
         signals.append(SignalCall(pid: pid, signal: signal))
+        switch signal {
+        case SIGTERM: trace?.append("signal.SIGTERM")
+        case SIGKILL: trace?.append("signal.SIGKILL")
+        default: trace?.append("signal.\(signal)")
+        }
         if signal == exitOnSignal { processes.removeAll { $0.pid == pid } }
     }
 }
@@ -68,11 +78,19 @@ actor FakeSimulatorSystem {
 actor FakeSessionStopper: SimulatorSessionStopping {
     private(set) var calls = 0
     private let hook: @Sendable () async -> Void
+    private let trace: SignalRecorder<String>?
 
-    init(hook: @escaping @Sendable () async -> Void = {}) { self.hook = hook }
+    init(
+        hook: @escaping @Sendable () async -> Void = {},
+        trace: SignalRecorder<String>? = nil
+    ) {
+        self.hook = hook
+        self.trace = trace
+    }
 
     func stopForSimulatorShutdown() async throws {
         calls += 1
+        trace?.append("session.stop")
         await hook()
     }
 }
@@ -84,8 +102,20 @@ struct ControllerFixture {
     let system: FakeSimulatorSystem
     let stopper: FakeSessionStopper
     let queue: AsyncFIFO
-    let monkeydoSignals: SignalRecorder
+    let monkeydoSignals: SignalRecorder<SignalCall>
     let controller: SimulatorController
+
+    /// The SDK every fixture test launches against.
+    let sdk: SdkInfo
+
+    /// Ordered record of fixture-visible events, for ordering assertions.
+    let trace: SignalRecorder<String>
+
+    /// Passed through to `SimulatorController`'s `deviceReadback`. Defaults
+    /// to a readback that always reports unavailable, so `status()`'s
+    /// observed `currentDevice` stays `nil` for every fixture test that does
+    /// not opt into a `ScriptedReadback` script.
+    let readback: any DeviceObserving
 
     init(
         runnerHandler: FakeProcessRunner.Handler? = nil,
@@ -94,17 +124,22 @@ struct ControllerFixture {
         monkeydoPathLookup: (@Sendable (Int32) -> String?)? = nil,
         monkeydoDidSignal: @escaping @Sendable (Int32) -> Void = { _ in },
         stopperHook: @escaping @Sendable () async -> Void = {},
-        activityStore: ActivityStore = .disabled
+        activityStore: ActivityStore = .disabled,
+        readback: any DeviceObserving = ScriptedReadback([])
     ) throws {
         directory = FileManager.default.temporaryDirectory
             .appending(path: "simulator-controller-tests-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         store = RuntimeStore(runtimeFile: directory.appending(path: "runtime.json"))
         externalLease = SimLease(lockFile: directory.appending(path: "sim.lock"))
-        let localSystem = FakeSimulatorSystem()
-        let localStopper = FakeSessionStopper(hook: stopperHook)
+        sdk = sampleSDK(version: "9.1.0")
+        self.readback = readback
+        let localTrace = SignalRecorder<String>()
+        trace = localTrace
+        let localSystem = FakeSimulatorSystem(trace: localTrace)
+        let localStopper = FakeSessionStopper(hook: stopperHook, trace: localTrace)
         let localQueue = AsyncFIFO()
-        let localMonkeydoSignals = SignalRecorder()
+        let localMonkeydoSignals = SignalRecorder<SignalCall>()
         system = localSystem
         stopper = localStopper
         queue = localQueue
@@ -141,7 +176,8 @@ struct ControllerFixture {
                 readinessProbe: probe,
                 clock: clock,
                 monkeydoLifecycle: monkeydoLifecycle,
-                activityStore: activityStore)
+                activityStore: activityStore,
+                deviceReadback: readback)
         } else {
             controller = SimulatorController(
                 queue: localQueue,
@@ -152,16 +188,49 @@ struct ControllerFixture {
                 system: simulatorSystem,
                 readinessProbe: probe,
                 monkeydoLifecycle: monkeydoLifecycle,
-                activityStore: activityStore)
+                activityStore: activityStore,
+                deviceReadback: readback)
         }
     }
 
     func tearDown() { try? FileManager.default.removeItem(at: directory) }
+
+    /// Brings the controller to a ready state on `pid`, returning its
+    /// context, AND arms the next relaunch so a device-change restart can
+    /// succeed: `FakeSimulatorSystem.launch` throws `ControllerTestError.expected`
+    /// unless `setLaunchIdentity(sdk:pid:)` was called.
+    func startReady(pid: Int32) async throws -> OperationContext {
+        await system.setProcesses([])
+        await system.setLaunchIdentity(sdk: sdk, pid: pid)
+        let context = try await controller.withOperation(
+            .simStart, requirement: .start(requested: sdk)
+        ) { $0 }
+        // Arm the pid a device-change restart would relaunch with.
+        await system.setLaunchIdentity(sdk: sdk, pid: pid + 1)
+        return context
+    }
+
+    /// A minimal `RunAppResult` for closures that must return one.
+    func runAppResult(sessionId: Int) -> RunAppResult {
+        RunAppResult(
+            sessionId: sessionId,
+            device: "fenix6xpro",
+            prgPath: "/project/bin/app.prg",
+            sdkPath: sdk.root.path,
+            sdkVersion: sdk.version.description,
+            rebuilt: true,
+            rebuildReason: .cacheMiss,
+            deviceVerified: false,
+            deviceVerificationUnavailable: ReadbackUnavailable.noSimulatorWindow.rawValue,
+            observedDeviceDisplayName: nil,
+            simulatorRestarted: false,
+            invalidatedSessionId: nil)
+    }
 }
 
 struct ControllerMonkeydoLifecycle: MonkeydoProcessLifecycling, Sendable {
     let pathLookup: @Sendable (Int32) -> String?
-    let signals: SignalRecorder
+    let signals: SignalRecorder<SignalCall>
     let didSignal: @Sendable (Int32) -> Void
 
     func launchApp(
@@ -207,12 +276,14 @@ struct ControllerMonkeydoLifecycle: MonkeydoProcessLifecycling, Sendable {
     }
 }
 
-final class SignalRecorder: @unchecked Sendable {
+/// Ordered, thread-safe append log, generic so both signal deliveries
+/// (`SignalCall`) and string trace events share one implementation.
+final class SignalRecorder<Element: Sendable>: @unchecked Sendable {
     private let lock = NSLock()
-    private var storage: [SignalCall] = []
+    private var storage: [Element] = []
 
-    var values: [SignalCall] { lock.withLock { storage } }
-    func append(_ value: SignalCall) { lock.withLock { storage.append(value) } }
+    var values: [Element] { lock.withLock { storage } }
+    func append(_ value: Element) { lock.withLock { storage.append(value) } }
 }
 
 final class MutableProcessPath: @unchecked Sendable {

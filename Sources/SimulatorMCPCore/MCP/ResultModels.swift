@@ -29,6 +29,17 @@ public enum BuildMode: String, Codable, Equatable, Sendable {
     case unitTests
 }
 
+/// Why a build did or did not reuse a published artifact. `cacheHit` is the
+/// only case where `rebuilt` is `false`; the other three always accompany
+/// `rebuilt: true` (or a failed build attempt) and explain why no artifact
+/// was reusable.
+public enum RebuildReason: String, Codable, Equatable, Sendable {
+    case cacheHit
+    case cacheMiss
+    case forced
+    case keyChanged
+}
+
 /// Which pipe of the app child a log line came from.
 public enum LogStream: String, Codable, Equatable, Sendable {
     case stdout
@@ -220,6 +231,7 @@ public struct BuildResult: Codable, Equatable, Sendable {
     public let succeeded: Bool
     public let prgPath: String?
     public let rebuilt: Bool
+    public let rebuildReason: RebuildReason
     public let artifactKey: String
     public let sdk: String
     public let device: String
@@ -230,6 +242,7 @@ public struct BuildResult: Codable, Equatable, Sendable {
         succeeded: Bool,
         prgPath: String?,
         rebuilt: Bool,
+        rebuildReason: RebuildReason,
         artifactKey: String,
         sdk: String,
         device: String,
@@ -239,6 +252,7 @@ public struct BuildResult: Codable, Equatable, Sendable {
         self.succeeded = succeeded
         self.prgPath = prgPath
         self.rebuilt = rebuilt
+        self.rebuildReason = rebuildReason
         self.artifactKey = artifactKey
         self.sdk = sdk
         self.device = device
@@ -251,6 +265,7 @@ public struct BuildResult: Codable, Equatable, Sendable {
         try container.encode(succeeded, forKey: .succeeded)
         try container.encode(prgPath, forKey: .prgPath)
         try container.encode(rebuilt, forKey: .rebuilt)
+        try container.encode(rebuildReason, forKey: .rebuildReason)
         try container.encode(artifactKey, forKey: .artifactKey)
         try container.encode(sdk, forKey: .sdk)
         try container.encode(device, forKey: .device)
@@ -311,7 +326,15 @@ public struct SimStatusResult: Codable, Equatable, Sendable {
     public let executablePath: String?
     public let sdkPath: String?
     public let sdkVersion: String?
+    /// Observed: the device the readback actually saw loaded, or `nil` when
+    /// the simulator is idle, unobservable, or an operation is in flight.
     public let currentDevice: String?
+    /// Requested: the last device someone asked for, regardless of whether
+    /// it was ever observed loaded.
+    public let requestedDevice: String?
+    /// `"observed"` when `currentDevice` came from a live readback this
+    /// call, `"unobserved"` otherwise.
+    public let deviceSource: String
     public let leaseHolder: String?
 
     public init(
@@ -322,6 +345,8 @@ public struct SimStatusResult: Codable, Equatable, Sendable {
         sdkPath: String?,
         sdkVersion: String?,
         currentDevice: String?,
+        requestedDevice: String?,
+        deviceSource: String,
         leaseHolder: String?
     ) {
         self.state = state
@@ -331,6 +356,8 @@ public struct SimStatusResult: Codable, Equatable, Sendable {
         self.sdkPath = sdkPath
         self.sdkVersion = sdkVersion
         self.currentDevice = currentDevice
+        self.requestedDevice = requestedDevice
+        self.deviceSource = deviceSource
         self.leaseHolder = leaseHolder
     }
 
@@ -343,6 +370,8 @@ public struct SimStatusResult: Codable, Equatable, Sendable {
         try container.encode(sdkPath, forKey: .sdkPath)
         try container.encode(sdkVersion, forKey: .sdkVersion)
         try container.encode(currentDevice, forKey: .currentDevice)
+        try container.encode(requestedDevice, forKey: .requestedDevice)
+        try container.encode(deviceSource, forKey: .deviceSource)
         try container.encode(leaseHolder, forKey: .leaseHolder)
     }
 }
@@ -356,6 +385,17 @@ public struct RunAppResult: Codable, Equatable, Sendable {
     public let sdkPath: String
     public let sdkVersion: String
     public let rebuilt: Bool
+    public let rebuildReason: RebuildReason
+    /// True only when the loaded device was read back and equals `device`.
+    /// False means the readback was unavailable — never that it disagreed,
+    /// which is a `device_mismatch` failure instead.
+    public let deviceVerified: Bool
+    /// A `ReadbackUnavailable` raw value when `deviceVerified` is false.
+    public let deviceVerificationUnavailable: String?
+    public let observedDeviceDisplayName: String?
+    public let simulatorRestarted: Bool
+    /// The session id discarded by a device-change restart; its logs are gone.
+    public let invalidatedSessionId: Int?
 
     public init(
         sessionId: Int,
@@ -363,7 +403,13 @@ public struct RunAppResult: Codable, Equatable, Sendable {
         prgPath: String,
         sdkPath: String,
         sdkVersion: String,
-        rebuilt: Bool
+        rebuilt: Bool,
+        rebuildReason: RebuildReason,
+        deviceVerified: Bool,
+        deviceVerificationUnavailable: String?,
+        observedDeviceDisplayName: String?,
+        simulatorRestarted: Bool,
+        invalidatedSessionId: Int?
     ) {
         self.sessionId = sessionId
         self.device = device
@@ -371,6 +417,35 @@ public struct RunAppResult: Codable, Equatable, Sendable {
         self.sdkPath = sdkPath
         self.sdkVersion = sdkVersion
         self.rebuilt = rebuilt
+        self.rebuildReason = rebuildReason
+        self.deviceVerified = deviceVerified
+        self.deviceVerificationUnavailable = deviceVerificationUnavailable
+        self.observedDeviceDisplayName = observedDeviceDisplayName
+        self.simulatorRestarted = simulatorRestarted
+        self.invalidatedSessionId = invalidatedSessionId
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case sessionId, device, prgPath, sdkPath, sdkVersion, rebuilt, rebuildReason
+        case deviceVerified, deviceVerificationUnavailable, observedDeviceDisplayName
+        case simulatorRestarted, invalidatedSessionId
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(sessionId, forKey: .sessionId)
+        try container.encode(device, forKey: .device)
+        try container.encode(prgPath, forKey: .prgPath)
+        try container.encode(sdkPath, forKey: .sdkPath)
+        try container.encode(sdkVersion, forKey: .sdkVersion)
+        try container.encode(rebuilt, forKey: .rebuilt)
+        try container.encode(rebuildReason, forKey: .rebuildReason)
+        try container.encode(deviceVerified, forKey: .deviceVerified)
+        // encodeIfPresent would omit the key; the contract requires explicit null.
+        try container.encode(deviceVerificationUnavailable, forKey: .deviceVerificationUnavailable)
+        try container.encode(observedDeviceDisplayName, forKey: .observedDeviceDisplayName)
+        try container.encode(simulatorRestarted, forKey: .simulatorRestarted)
+        try container.encode(invalidatedSessionId, forKey: .invalidatedSessionId)
     }
 }
 
@@ -511,6 +586,12 @@ public struct ScreenshotResult: Codable, Equatable, Sendable {
     public let width: Int
     public let height: Int
     public let capturedPid: Int32
+    /// The device the readback observed loaded at capture time, or `nil` when
+    /// it could not be observed. Never derived from `appDisplayRect` or
+    /// guessed from a successful capture — see `ScreenshotService.capture`.
+    public let device: String?
+    public let deviceDisplayName: String?
+    public let nativeResolution: DisplaySize?
     public let appDisplayRect: DisplayRect?
 
     public init(
@@ -519,6 +600,9 @@ public struct ScreenshotResult: Codable, Equatable, Sendable {
         width: Int,
         height: Int,
         capturedPid: Int32,
+        device: String?,
+        deviceDisplayName: String?,
+        nativeResolution: DisplaySize?,
         appDisplayRect: DisplayRect?
     ) {
         self.path = path
@@ -526,6 +610,9 @@ public struct ScreenshotResult: Codable, Equatable, Sendable {
         self.width = width
         self.height = height
         self.capturedPid = capturedPid
+        self.device = device
+        self.deviceDisplayName = deviceDisplayName
+        self.nativeResolution = nativeResolution
         self.appDisplayRect = appDisplayRect
     }
 
@@ -536,6 +623,9 @@ public struct ScreenshotResult: Codable, Equatable, Sendable {
         try container.encode(width, forKey: .width)
         try container.encode(height, forKey: .height)
         try container.encode(capturedPid, forKey: .capturedPid)
+        try container.encode(device, forKey: .device)
+        try container.encode(deviceDisplayName, forKey: .deviceDisplayName)
+        try container.encode(nativeResolution, forKey: .nativeResolution)
         try container.encode(appDisplayRect, forKey: .appDisplayRect)
     }
 }
@@ -549,6 +639,20 @@ public struct DisplayRect: Codable, Equatable, Sendable {
     public init(x: Int, y: Int, width: Int, height: Int) {
         self.x = x
         self.y = y
+        self.width = width
+        self.height = height
+    }
+}
+
+/// A device's native screen resolution — width/height only, no position.
+/// Distinct from `appDisplayRect`, which is the app's rectangle scaled into
+/// the *captured* window image and always keyed by `context.currentDevice`;
+/// `nativeResolution` is keyed by the device the readback actually observed.
+public struct DisplaySize: Codable, Equatable, Sendable {
+    public let width: Int
+    public let height: Int
+
+    public init(width: Int, height: Int) {
         self.width = width
         self.height = height
     }
@@ -607,6 +711,9 @@ public struct SequenceStepOutcome: Codable, Equatable, Sendable {
     public let path: String?
     public let width: Int?
     public let height: Int?
+    public let device: String?
+    public let deviceDisplayName: String?
+    public let nativeResolution: DisplaySize?
 
     public init(
         index: Int,
@@ -620,7 +727,10 @@ public struct SequenceStepOutcome: Codable, Equatable, Sendable {
         linesScanned: Int? = nil,
         path: String? = nil,
         width: Int? = nil,
-        height: Int? = nil
+        height: Int? = nil,
+        device: String? = nil,
+        deviceDisplayName: String? = nil,
+        nativeResolution: DisplaySize? = nil
     ) {
         self.index = index
         self.kind = kind
@@ -634,6 +744,9 @@ public struct SequenceStepOutcome: Codable, Equatable, Sendable {
         self.path = path
         self.width = width
         self.height = height
+        self.device = device
+        self.deviceDisplayName = deviceDisplayName
+        self.nativeResolution = nativeResolution
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -650,6 +763,9 @@ public struct SequenceStepOutcome: Codable, Equatable, Sendable {
         try container.encode(path, forKey: .path)
         try container.encode(width, forKey: .width)
         try container.encode(height, forKey: .height)
+        try container.encode(device, forKey: .device)
+        try container.encode(deviceDisplayName, forKey: .deviceDisplayName)
+        try container.encode(nativeResolution, forKey: .nativeResolution)
     }
 }
 

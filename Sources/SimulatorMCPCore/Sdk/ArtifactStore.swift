@@ -340,6 +340,18 @@ public struct ArtifactStore: Sendable {
         return sidecar
     }
 
+    /// Why no artifact was reusable: `keyChanged` only when a decodable
+    /// sidecar exists and its recorded key differs. Everything else — no
+    /// sidecar, unreadable sidecar, missing or altered PRG — is a cacheMiss,
+    /// because nothing establishes that a key ever matched.
+    func rebuildReason(paths: ArtifactPaths, key: ArtifactKey) -> RebuildReason {
+        guard
+            let sidecarData = try? Data(contentsOf: paths.sidecar),
+            let sidecar = try? JSONDecoder().decode(ArtifactSidecar.self, from: sidecarData)
+        else { return .cacheMiss }
+        return sidecar.artifactKey == key.key ? .cacheMiss : .keyChanged
+    }
+
     // MARK: - Publication
 
     /// Validates the compiler's temporary output, renames it durably over

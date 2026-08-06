@@ -1067,7 +1067,12 @@ struct ButtonInputTests {
             try await body(OperationContext(simulatorPid: 42, sdk: sdk("8.4.1"), currentDevice: "venu3", listeningEndpoints: []))
         }
         let wrongDevice = ButtonInputService(profile: profile, transport: fake, operationRunner: wrongDeviceRunner)
-        #expect((await #expect(throws: ToolError.self) { try await wrongDevice.press(PressButtonToolRequest(button: "up")) })?.code == "input_unsupported")
+        let wrongDeviceError = await #expect(throws: ToolError.self) { try await wrongDevice.press(PressButtonToolRequest(button: "up")) }
+        #expect(wrongDeviceError?.code == "input_unsupported")
+        // The default refusal fix must point a caller at how to discover a
+        // supported device rather than leave them guessing which one to try.
+        #expect(wrongDeviceError?.fix.contains("list_devices") == true)
+        #expect(wrongDeviceError?.fix.contains("inputSupported") == true)
 
         let wrongSDKRunner = ButtonOperationRunner { _, _, body in
             try await body(OperationContext(simulatorPid: 42, sdk: sdk("9.1.0"), currentDevice: "fenix6xpro", listeningEndpoints: []))
